@@ -1,0 +1,427 @@
+// Ecoserve database schema
+// Prisma 7 — run `npm run prisma:generate` (outputs the client to src/generated/prisma)
+//
+// ── Relationship map ──────────────────────────────────────────────
+// User       1—1  Donor | Ngo | Volunteer   (one profile per role)
+// Donor      1—N  Donation
+// Donation   1—N  DonationImage | AiPrediction | NgoRequest |
+//                 VolunteerAssignment        (→ Delivery via assignment)
+// Ngo        1—N  NgoRequest
+// Volunteer  1—N  VolunteerAssignment
+// Assignment 1—1  Delivery
+// Delivery   1—N  DeliveryLocation | Review
+// FoodCategory 1—N Donation
+// ──────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+  runtime  = "nodejs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Roles on the Ecoserve platform
+enum Role {
+  DONOR
+  NGO
+  VOLUNTEER
+  ADMIN
+}
+
+/// Account lifecycle status
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+/// NGO verification lifecycle
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+/// Volunteer availability state
+enum Availability {
+  AVAILABLE
+  BUSY
+  OFFLINE
+}
+
+/// Lifecycle of a food donation listing
+enum DonationStatus {
+  AVAILABLE
+  RESERVED
+  PICKED_UP
+  DELIVERED
+  EXPIRED
+  CANCELLED
+}
+
+/// NGO request lifecycle against a donation
+enum RequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+/// Volunteer delivery assignment lifecycle
+enum AssignmentStatus {
+  PENDING
+  ACCEPTED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+/// Lifecycle of a delivery run
+enum DeliveryStatus {
+  PENDING
+  IN_TRANSIT
+  COMPLETED
+  CANCELLED
+}
+
+/// Core user account shared across all roles
+/// id = Supabase Auth user id (sub claim). Passwords are managed by Supabase Auth.
+model User {
+  id           String     @id
+  fullName     String
+  email        String     @unique
+  phone        String?
+  passwordHash String?
+  role         Role       @default(DONOR)
+  profileImage String?
+  status       UserStatus @default(PENDING)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  donor           Donor?
+  ngo             Ngo?
+  volunteer       Volunteer?
+  notifications   Notification[]
+  reviewsGiven    Review[] @relation("Reviewer")
+  reviewsReceived Review[] @relation("Reviewee")
+  sessions        Session[]
+  auditLogs       AuditLog[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+/// Donor organization profile (1:1 with a User of role DONOR)
+model Donor {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  organizationName String
+  organizationType String
+  address          String
+  city             String
+  state            String
+  latitude         Float?
+  longitude        Float?
+  description      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  donations Donation[]
+
+  @@map("donors")
+}
+
+/// NGO profile (1:1 with a User of role NGO)
+model Ngo {
+  id                 String             @id @default(cuid())
+  userId             String             @unique
+  ngoName            String
+  registrationNumber String             @unique
+  address            String
+  city               String
+  state              String
+  latitude           Float?
+  longitude          Float?
+  capacity           Int?
+  description        String?
+  verificationStatus VerificationStatus @default(PENDING)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requests NgoRequest[]
+
+  @@index([verificationStatus])
+  @@map("ngos")
+}
+
+/// Volunteer profile (1:1 with a User of role VOLUNTEER)
+model Volunteer {
+  id                String       @id @default(cuid())
+  userId            String       @unique
+  vehicleType       String?
+  vehicleNumber     String?
+  availability      Availability @default(OFFLINE)
+  currentLatitude   Float?
+  currentLongitude  Float?
+  rating            Float        @default(0)
+  totalDeliveries   Int          @default(0)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignments VolunteerAssignment[]
+
+  @@index([availability])
+  @@map("volunteers")
+}
+
+/// Food category for donations (e.g. Grains, Vegetables, Cooked Meals)
+model FoodCategory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  donations Donation[]
+
+  @@map("food_categories")
+}
+
+/// A food donation listing posted by a donor
+model Donation {
+  id             String         @id @default(cuid())
+  donorId        String
+  categoryId     String
+  foodName       String
+  description    String?
+  quantity       Float
+  unit           String
+  preparedAt     DateTime?
+  expiryTime     DateTime?
+  pickupTime     DateTime?
+  pickupAddress  String
+  latitude       Float?
+  longitude      Float?
+  freshnessScore Float? // 0–100, AI-computed
+  safeHours      Float? // hours until unsafe, AI-computed
+  spoilageRisk   String? // LOW | MEDIUM | HIGH, AI-computed
+  priority       Int? // 1–5 urgency, AI-computed
+  status         DonationStatus @default(AVAILABLE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  donor       Donor                 @relation(fields: [donorId], references: [id], onDelete: Cascade)
+  category    FoodCategory          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  images      DonationImage[]
+  requests    NgoRequest[]
+  assignments VolunteerAssignment[]
+  predictions AiPrediction[]
+
+  @@index([status, expiryTime])
+  @@index([categoryId, status])
+  @@index([donorId, createdAt])
+  @@index([createdAt])
+  @@map("donations")
+}
+
+/// Image attached to a donation listing
+model DonationImage {
+  id         String   @id @default(cuid())
+  donationId String
+  imageUrl   String
+  fileId     String?
+  fileName   String
+  fileSize   Int?
+  mimeType   String?
+  createdAt  DateTime @default(now())
+
+  donation Donation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+
+  @@map("donation_images")
+}
+
+/// An NGO's request to accept a donation
+model NgoRequest {
+  id          String        @id @default(cuid())
+  ngoId       String
+  donationId  String
+  status      RequestStatus @default(PENDING)
+  requestedAt DateTime      @default(now())
+  acceptedAt  DateTime?
+  rejectedAt  DateTime?
+
+  ngo      Ngo      @relation(fields: [ngoId], references: [id], onDelete: Cascade)
+  donation Donation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+
+  @@unique([ngoId, donationId])
+  @@index([donationId, status])
+  @@map("ngo_requests")
+}
+
+/// Assignment of a volunteer to deliver a donation
+model VolunteerAssignment {
+  id           String           @id @default(cuid())
+  volunteerId  String
+  donationId   String
+  assignedAt   DateTime         @default(now())
+  acceptedAt   DateTime?
+  pickupTime   DateTime?
+  deliveryTime DateTime?
+  status       AssignmentStatus @default(PENDING)
+
+  volunteer Volunteer @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  donation  Donation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+  delivery  Delivery?
+
+  @@index([volunteerId, status])
+  @@map("volunteer_assignments")
+}
+
+/// A delivery run for an accepted volunteer assignment
+model Delivery {
+  id             String          @id @default(cuid())
+  assignmentId   String          @unique
+  pickupLocation String
+  dropLocation   String
+  startedAt      DateTime?
+  completedAt    DateTime?
+  eta            DateTime?
+  distance       Float? // km
+  status         DeliveryStatus  @default(PENDING)
+  proofImage     String?
+  createdAt      DateTime        @default(now())
+
+  assignment VolunteerAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  locations  DeliveryLocation[]
+  reviews    Review[]
+
+  @@index([status])
+  @@map("deliveries")
+}
+
+/// A GPS sample recorded during a delivery (realtime tracking)
+model DeliveryLocation {
+  id         String   @id @default(cuid())
+  deliveryId String
+  latitude   Float
+  longitude  Float
+  accuracy   Float?
+  speed      Float?
+  heading    Float?
+  timestamp  DateTime
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId, timestamp])
+  @@index([timestamp])
+  @@map("delivery_locations")
+}
+
+/// A scoring prediction produced by the AI service for a donation
+model AiPrediction {
+  id             String   @id @default(cuid())
+  donationId     String
+  freshnessScore Float
+  safeHours      Float
+  spoilageRisk   String // LOW | MEDIUM | HIGH
+  priority       Int // 1–5
+  confidence     Float // 0–1
+  modelVersion   String
+  createdAt      DateTime @default(now())
+
+  donation Donation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+
+  @@index([donationId, createdAt])
+  @@map("ai_predictions")
+}
+
+/// A user-facing notification (also pushed in realtime via Socket.IO)
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String // DONATION | REQUEST | DELIVERY | REVIEW | SYSTEM | ...
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([isRead])
+  @@map("notifications")
+}
+
+/// A rating left after a completed delivery (reviewer → reviewee)
+model Review {
+  id         String   @id @default(cuid())
+  deliveryId String
+  reviewerId String
+  revieweeId String
+  rating     Int // 1–5
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  delivery Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  reviewer User     @relation("Reviewer", fields: [reviewerId], references: [id], onDelete: Cascade)
+  reviewee User     @relation("Reviewee", fields: [revieweeId], references: [id], onDelete: Cascade)
+
+  @@unique([deliveryId, reviewerId])
+  @@index([revieweeId])
+  @@map("reviews")
+}
+
+/// Daily platform metrics (one row per day, filled by a rollup job)
+/// Convention: `date` must be normalized to midnight UTC so upserts key consistently.
+model Analytics {
+  id          String   @id @default(cuid())
+  date        DateTime @unique
+  donations   Int      @default(0)
+  foodSaved   Float    @default(0) // kg
+  mealsServed Int      @default(0)
+  co2Saved    Float    @default(0) // kg CO₂ equivalent
+  deliveries  Int      @default(0)
+  activeUsers Int      @default(0)
+
+  @@map("analytics")
+}
+
+/// Server-side session tracking (refresh token hash). Supabase Auth manages
+/// its own sessions; this table supports custom refresh flows if needed.
+model Session {
+  id               String   @id @default(cuid())
+  userId           String
+  refreshTokenHash String   @unique
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Immutable audit trail of significant actions
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String // e.g. donation.created, request.accepted
+  entity    String // e.g. donation, ngo_request
+  entityId  String
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
