@@ -2,6 +2,7 @@ import type { Request, Response } from 'express'
 import type { Prisma } from '../generated/prisma/client.js'
 
 import { prisma } from '../config/prisma.js'
+import { classifyFoodImage } from '../services/foodClassifierService.js'
 import { scoreDonation } from '../services/freshnessService.js'
 import { HttpError } from '../utils/HttpError.js'
 import { listDonationsQuerySchema, type CreateDonationBody } from '../validators/donation.js'
@@ -144,6 +145,8 @@ export async function createDonation(req: Request, res: Response): Promise<void>
   })
 
   // Trigger AI (Step 47): score freshness + urgency from category and times.
+  // The rule model is the primary signal and is intentionally never allowed to
+  // fail the request; the food classifier below enriches the same row.
   let prediction = null
   try {
     const score = scoreDonation({
@@ -163,8 +166,27 @@ export async function createDonation(req: Request, res: Response): Promise<void>
         modelVersion: score.modelVersion,
       },
     })
+
+    // Step 96 — dish enrichment from the Python ai-service (complementary to
+    // freshness). Fail-open: when AI_SERVICE_URL is unset or the service is
+    // down, `classifyFoodImage` returns null and the listing stands as-is.
+    const firstImageUrl = donation.images[0]?.imageUrl
+    if (firstImageUrl) {
+      const food = await classifyFoodImage(firstImageUrl)
+      if (food) {
+        prediction = await prisma.aiPrediction.update({
+          where: { id: prediction.id },
+          data: {
+            foodClass: food.foodClass,
+            foodClassConfidence: food.confidence,
+            foodClassUncertain: food.uncertain,
+            foodClassifierModel: food.modelVersion,
+          },
+        })
+      }
+    }
   } catch (err) {
-    console.error(`[ai] freshness prediction failed for donation ${donation.id}:`, err)
+    console.error(`[ai] prediction failed for donation ${donation.id}:`, err)
   }
 
   res.status(201).json({ donation, prediction })
@@ -231,7 +253,15 @@ export async function listDonations(req: Request, res: Response): Promise<void> 
         predictions: {
           orderBy: { createdAt: 'desc' },
           take: 1,
-          select: { freshnessScore: true, safeHours: true, spoilageRisk: true, priority: true },
+          select: {
+            freshnessScore: true,
+            safeHours: true,
+            spoilageRisk: true,
+            priority: true,
+            foodClass: true,
+            foodClassConfidence: true,
+            foodClassUncertain: true,
+          },
         },
       },
     }),

@@ -1,0 +1,17 @@
+dataset:
+  path: ./food dataset/Foodies_Challenge_Dataset
+inference:
+  confidence_threshold: 0.7
+model:
+  name: efficientnet_b0
+  pretrained: true
+system:
+  random_seed: 42
+training:
+  batch_size: 16
+  epochs: 2
+  fine_tune_learning_rate: 1.0e-05
+  image_size: 224
+  learning_rate: 0.001
+  patience: 3
+  weight_decay: 0.0001

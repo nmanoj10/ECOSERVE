@@ -42,6 +42,12 @@ const envSchema = z.object({
   IMAGEKIT_PRIVATE_KEY: z.string().optional(),
   IMAGEKIT_URL_ENDPOINT: z.string().optional(),
 
+  // Python ai-service (food classifier, Step 96). Optional — when unset, the
+  // backend skips dish enrichment on donation create (the rule-based freshness
+  // scoring still runs). The AI service is server-to-server only; the frontend
+  // never calls it directly.
+  AI_SERVICE_URL: z.string().url().optional(),
+
   // Rescue sweep (Phase 19) — how often the job scans for expiring food.
   RESCUE_INTERVAL_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
 

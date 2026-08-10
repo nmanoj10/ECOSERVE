@@ -344,6 +344,13 @@ model AiPrediction {
   priority       Int // 1–5
   confidence     Float // 0–1
   modelVersion   String
+  // Step 96 — dish enrichment from the Python food classifier (ai-service).
+  // Set once when a donation photo is classified; null when the AI service
+  // isn't configured or the call failed (enrichment is advisory).
+  foodClass             String? // predicted dish, e.g. "Dosa", or "Unknown" below threshold
+  foodClassConfidence   Float? // 0–1 probability of the top class
+  foodClassUncertain    Boolean? // true when top class < 0.70 threshold
+  foodClassifierModel   String? // trained weights, e.g. "v2" (EfficientNet-B0)
   createdAt      DateTime @default(now())
 
   donation Donation @relation(fields: [donationId], references: [id], onDelete: Cascade)

@@ -1,0 +1,33 @@
+{
+  "model_version": "v2",
+  "model_name": "efficientnet_b0",
+  "num_classes": 20,
+  "class_names": [
+    "Aloo_matar",
+    "Besan_cheela",
+    "Biryani",
+    "Chapathi",
+    "Chole_bature",
+    "Dahl",
+    "Dhokla",
+    "Dosa",
+    "Gulab_jamun",
+    "Idli",
+    "Jalebi",
+    "Kadai_paneer",
+    "Naan",
+    "Paani_puri",
+    "Pakoda",
+    "Pav_bhaji",
+    "Poha",
+    "Rolls",
+    "Samosa",
+    "Vada_pav"
+  ],
+  "image_size": 224,
+  "normalization": {
+    "mean": [0.485, 0.456, 0.406],
+    "std": [0.229, 0.224, 0.225]
+  },
+  "confidence_threshold": 0.70
+}

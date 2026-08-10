@@ -1,0 +1,9 @@
+model:
+  name: "efficientnet_b0"
+  pretrained: false
+
+inference:
+  confidence_threshold: 0.70
+
+training:
+  image_size: 224
