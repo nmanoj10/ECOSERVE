@@ -88,3 +88,17 @@ values instantly.
   (`npx playwright show-trace <file>`).
 - The ImageKit upload + AI classification are exercised with a real generated
   PNG (128×128, above the AI service's 100×100 minimum).
+
+## Removing test data
+
+`backend/scripts/cleanup-test-data.ts` deletes everything the testing steps
+created — platform rows, Supabase Auth users, and ImageKit uploads — while
+never touching real accounts. Preview first, then execute:
+
+```bash
+cd backend
+npx tsx scripts/cleanup-test-data.ts            # dry run (prints every test account)
+DRY_RUN=0 npx tsx scripts/cleanup-test-data.ts  # delete for real
+```
+
+It also recomputes the daily Analytics rollup from the remaining real data.
