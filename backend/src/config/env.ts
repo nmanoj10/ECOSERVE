@@ -48,6 +48,12 @@ const envSchema = z.object({
   // never calls it directly.
   AI_SERVICE_URL: z.string().url().optional(),
 
+  // Rate limiting (Phase 34, Step 87). Defaults match the original hardcoded
+  // limits; dev/test environments (E2E suites, load checks) can raise them via
+  // env without touching the security defaults for production.
+  API_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+
   // Rescue sweep (Phase 19) — how often the job scans for expiring food.
   RESCUE_INTERVAL_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
 

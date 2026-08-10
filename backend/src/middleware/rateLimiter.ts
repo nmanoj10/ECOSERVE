@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express'
 import { rateLimit, type Options } from 'express-rate-limit'
 
+import { env } from '../config/env.js'
 import { HttpError } from '../utils/HttpError.js'
 
 /**
@@ -17,7 +18,7 @@ function tooManyRequests(_req: Request, res: Response, next: NextFunction, optio
 /** Global limiter applied to all /api/v1 routes. */
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 100,
+  limit: env.API_RATE_LIMIT_MAX,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   handler: tooManyRequests,
@@ -26,7 +27,7 @@ export const apiLimiter = rateLimit({
 /** Stricter limiter for authentication endpoints (brute-force protection). */
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: env.AUTH_RATE_LIMIT_MAX,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   handler: tooManyRequests,

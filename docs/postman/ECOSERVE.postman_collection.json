@@ -1,0 +1,1315 @@
+{
+  "info": {
+    "_postman_id": "3f7d9a1e-ecoserve-2026-step97",
+    "name": "ECOSERVE API — Phase 38 Step 97",
+    "description": "API test suite for the Ecoserve food-redistribution platform.\n\nRun the folders in order so chained variables (tokens, donationId, deliveryId, ...) are captured:\n\n  1. Setup — Supabase auth (signup once, then login each run)\n  2. Auth & Sessions (backend register + token lifecycle)\n  3. Donation\n  4. NGO\n  5. Volunteer\n  6. Assignment\n  7. Delivery\n  8. Analytics\n  9. Admin\n  10. Notifications\n\nAuth model: the frontend authenticates directly against Supabase (GoTrue) and\npresents the access token to the backend. Every backend request below sends\n`Authorization: Bearer <role-token>`, captured from the Supabase login/signup\nresponses into collection variables.\n\nAdmin note: ADMIN accounts cannot be self-registered (roles are DONOR | NGO |\nVOLUNTEER). Create an admin user in the Supabase dashboard and set its role to\nADMIN in the users table (see docs/postman/README.md) before using the Admin folder.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 · Setup — Supabase auth",
+      "item": [
+        {
+          "name": "Health check (no auth)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{apiBase}}/health" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('health returns ok', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign up Donor (first run only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{supabaseAnonKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{donorEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": { "raw": "{{supabaseUrl}}/auth/v1/signup" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "  pm.collectionVariables.set('donorToken', json.access_token);",
+                  "  pm.collectionVariables.set('donorRefreshToken', json.refresh_token);",
+                  "  pm.collectionVariables.set('donorUserId', json.user.id);",
+                  "}",
+                  "// 200 = created, 400 = exists / confirmation pending — login instead.",
+                  "pm.test('signup accepted or user already exists', () => {",
+                  "  pm.expect([200, 201, 400, 422]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign up NGO (first run only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{supabaseAnonKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{ngoEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": { "raw": "{{supabaseUrl}}/auth/v1/signup" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "  pm.collectionVariables.set('ngoToken', json.access_token);",
+                  "  pm.collectionVariables.set('ngoRefreshToken', json.refresh_token);",
+                  "  pm.collectionVariables.set('ngoUserId', json.user.id);",
+                  "}",
+                  "pm.test('signup accepted or user already exists', () => {",
+                  "  pm.expect([200, 201, 400, 422]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign up Volunteer (first run only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{supabaseAnonKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{volunteerEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": { "raw": "{{supabaseUrl}}/auth/v1/signup" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.access_token) {",
+                  "  pm.collectionVariables.set('volunteerToken', json.access_token);",
+                  "  pm.collectionVariables.set('volunteerRefreshToken', json.refresh_token);",
+                  "  pm.collectionVariables.set('volunteerUserId', json.user.id);",
+                  "}",
+                  "pm.test('signup accepted or user already exists', () => {",
+                  "  pm.expect([200, 201, 400, 422]).to.include(pm.response.code);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Donor (password grant)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{supabaseAnonKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{donorEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": { "raw": "{{supabaseUrl}}/auth/v1/token?grant_type=password" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('login returns a session', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('donorToken', json.access_token);",
+                  "pm.collectionVariables.set('donorRefreshToken', json.refresh_token);",
+                  "pm.collectionVariables.set('donorUserId', json.user.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login NGO (password grant)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{supabaseAnonKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{ngoEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": { "raw": "{{supabaseUrl}}/auth/v1/token?grant_type=password" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('login returns a session', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('ngoToken', json.access_token);",
+                  "pm.collectionVariables.set('ngoRefreshToken', json.refresh_token);",
+                  "pm.collectionVariables.set('ngoUserId', json.user.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Volunteer (password grant)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{supabaseAnonKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{volunteerEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": { "raw": "{{supabaseUrl}}/auth/v1/token?grant_type=password" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('login returns a session', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('volunteerToken', json.access_token);",
+                  "pm.collectionVariables.set('volunteerRefreshToken', json.refresh_token);",
+                  "pm.collectionVariables.set('volunteerUserId', json.user.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Admin (password grant — see README to create the admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "apikey", "value": "{{supabaseAnonKey}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": { "raw": "{{supabaseUrl}}/auth/v1/token?grant_type=password" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('login returns a session', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('adminToken', json.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 · Auth & Sessions (backend)",
+      "item": [
+        {
+          "name": "Register Donor (platform user)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{donorToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Spice House (API Test)\",\n  \"role\": \"DONOR\",\n  \"phone\": \"9876500001\",\n  \"donor\": {\n    \"organizationName\": \"Spice House (API Test)\",\n    \"organizationType\": \"Restaurant\",\n    \"address\": \"12 MG Road\",\n    \"city\": \"Bengaluru\",\n    \"state\": \"Karnataka\",\n    \"latitude\": 12.9716,\n    \"longitude\": 77.5946\n  }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('register donor', () => {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "  pm.expect(pm.response.json().user.role).to.eql('DONOR');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register NGO (platform user)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ngoToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Hope Foundation (API Test)\",\n  \"role\": \"NGO\",\n  \"phone\": \"9876500002\",\n  \"ngo\": {\n    \"ngoName\": \"Hope Foundation (API Test)\",\n    \"registrationNumber\": \"NG-API-001\",\n    \"address\": \"5 Residency Road\",\n    \"city\": \"Bengaluru\",\n    \"state\": \"Karnataka\",\n    \"latitude\": 12.9756,\n    \"longitude\": 77.6067,\n    \"capacity\": 200\n  }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('register ngo', () => {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "  pm.expect(pm.response.json().user.role).to.eql('NGO');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register Volunteer (platform user)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{volunteerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Ravi Kumar (API Test)\",\n  \"role\": \"VOLUNTEER\",\n  \"phone\": \"9876500003\",\n  \"volunteer\": {\n    \"vehicleType\": \"Van\",\n    \"vehicleNumber\": \"KA-01-AB-1234\",\n    \"availability\": \"AVAILABLE\",\n    \"currentLatitude\": 12.965,\n    \"currentLongitude\": 77.585\n  }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('register volunteer', () => {",
+                  "  pm.expect([200, 201]).to.include(pm.response.code);",
+                  "  pm.expect(pm.response.json().user.role).to.eql('VOLUNTEER');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /auth/me (donor)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{donorToken}}" }],
+            "url": { "raw": "{{baseUrl}}/auth/me" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('me returns the profile', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().user.donor).to.be.an('object');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/sessions (record refresh token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{donorToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{donorRefreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/sessions" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('session recorded', () => pm.response.to.have.status(201));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/refresh (rotate tokens)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{donorRefreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/refresh" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('refresh rotates the pair', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().accessToken).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('donorToken', pm.response.json().accessToken);",
+                  "pm.collectionVariables.set('donorRefreshToken', pm.response.json().refreshToken);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /auth/sessions (list devices)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{donorToken}}" }],
+            "url": { "raw": "{{baseUrl}}/auth/sessions" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('sessions listed', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/logout (revoke session)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{donorRefreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/logout" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('logout revokes the session', () => pm.response.to.have.status(204));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 · Donation",
+      "item": [
+        {
+          "name": "POST /donations (create listing)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{donorToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"foodName\": \"Paneer Biryani (API Test)\",\n  \"category\": \"Cooked\",\n  \"quantity\": 8,\n  \"unit\": \"kg\",\n  \"preparedAt\": \"{{preparedAt}}\",\n  \"expiryTime\": \"{{expiryTime}}\",\n  \"pickupTime\": \"{{pickupTime}}\",\n  \"pickupAddress\": \"12 MG Road, Bengaluru, Karnataka\",\n  \"latitude\": 12.9716,\n  \"longitude\": 77.5946,\n  \"description\": \"Freshly cooked — created by the Postman API test suite.\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/donations" }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Fresh timestamps (relative to now) so the listing never",
+                  "// lands already-expired on re-runs.",
+                  "const now = Date.now();",
+                  "pm.collectionVariables.set('preparedAt', new Date(now + 60 * 60 * 1000).toISOString());",
+                  "pm.collectionVariables.set('pickupTime', new Date(now + 2 * 60 * 60 * 1000).toISOString());",
+                  "pm.collectionVariables.set('expiryTime', new Date(now + 4 * 60 * 60 * 1000).toISOString());"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('donation created with AI prediction', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().donation.status).to.eql('AVAILABLE');",
+                  "  pm.expect(pm.response.json().prediction).to.have.property('freshnessScore');",
+                  "});",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('donationId', json.donation.id);",
+                  "pm.collectionVariables.set('donationPriority', json.prediction ? String(json.prediction.priority) : 'n/a');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /donations (list, donor scoped)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{donorToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/donations?page=1&limit=10&search=Biryani",
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" },
+                { "key": "search", "value": "Biryani" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('list returns the created donation', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().pagination.total).to.be.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /donations/:id (detail + timeline)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{donorToken}}" }],
+            "url": { "raw": "{{baseUrl}}/donations/{{donationId}}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('detail returns a timeline', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().donation.timeline[0].type).to.eql('listed');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4 · NGO",
+      "item": [
+        {
+          "name": "GET /donations/nearby (geolocation search)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{ngoToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/donations/nearby?lat=12.9756&lng=77.6067&distance=25",
+              "query": [
+                { "key": "lat", "value": "12.9756" },
+                { "key": "lng", "value": "77.6067" },
+                { "key": "distance", "value": "25" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('nearby finds the donation', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().donations.length).to.be.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /ngo/requests (claim donation)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ngoToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"donationId\": \"{{donationId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/ngo/requests" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('claim accepted and donation reserved', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().request.status).to.eql('ACCEPTED');",
+                  "});",
+                  "pm.collectionVariables.set('requestId', pm.response.json().request.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /ngo/requests (list claims)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{ngoToken}}" }],
+            "url": { "raw": "{{baseUrl}}/ngo/requests?page=1&limit=20" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('claims listed', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().requests.length).to.be.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /ngo/dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{ngoToken}}" }],
+            "url": { "raw": "{{baseUrl}}/ngo/dashboard" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('dashboard has inventory', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().acceptedCount).to.be.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5 · Volunteer",
+      "item": [
+        {
+          "name": "GET /volunteer/dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{volunteerToken}}" }],
+            "url": { "raw": "{{baseUrl}}/volunteer/dashboard" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('dashboard loads', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /volunteer/availability (go AVAILABLE)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{volunteerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"availability\": \"AVAILABLE\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/volunteer/availability" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('availability updated', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().volunteer.availability).to.eql('AVAILABLE');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /assignments/recommend (ranked volunteers)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{volunteerToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/assignments/recommend?donationId={{donationId}}&limit=5",
+              "query": [
+                { "key": "donationId", "value": "{{donationId}}" },
+                { "key": "limit", "value": "5" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('recommendations returned', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().recommendations).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /assignments (accept delivery)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{volunteerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"donationId\": \"{{donationId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/assignments" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('assignment + delivery created', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().assignment.status).to.eql('ACCEPTED');",
+                  "  pm.expect(pm.response.json().delivery.status).to.eql('VOLUNTEER_ASSIGNED');",
+                  "});",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('assignmentId', json.assignment.id);",
+                  "pm.collectionVariables.set('deliveryId', json.delivery.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6 · Delivery",
+      "item": [
+        {
+          "name": "GET /deliveries/tracking (active runs)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{volunteerToken}}" }],
+            "url": { "raw": "{{baseUrl}}/deliveries/tracking" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('tracking lists the active delivery', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().deliveries.length).to.be.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /deliveries/:id/start (pickup)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{volunteerToken}}" }],
+            "body": { "mode": "raw", "raw": "" },
+            "url": { "raw": "{{baseUrl}}/deliveries/{{deliveryId}}/start" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('delivery starts', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().delivery.status).to.eql('IN_TRANSIT');",
+                  "  pm.expect(pm.response.json().donation.status).to.eql('PICKED_UP');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /deliveries/:id/location (GPS sample)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{volunteerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latitude\": 12.9756,\n  \"longitude\": 77.6067,\n  \"accuracy\": 8,\n  \"speed\": 22.5,\n  \"heading\": 90,\n  \"timestamp\": \"2026-08-10T12:40:00+05:30\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/deliveries/{{deliveryId}}/location" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('location recorded', () => pm.response.to.have.status(201));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /deliveries/:id/complete (delivered)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{volunteerToken}}" }],
+            "body": { "mode": "raw", "raw": "" },
+            "url": { "raw": "{{baseUrl}}/deliveries/{{deliveryId}}/complete" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('delivery completed', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().delivery.status).to.eql('DELIVERED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7 · Analytics",
+      "item": [
+        {
+          "name": "GET /analytics/donor",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{donorToken}}" }],
+            "url": { "raw": "{{baseUrl}}/analytics/donor" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('donor analytics reflect the saved delivery', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().summary.totalDonations).to.be.at.least(1);",
+                  "  pm.expect(pm.response.json().summary.co2Kg).to.be.at.least(0);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /analytics/ngo",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{ngoToken}}" }],
+            "url": { "raw": "{{baseUrl}}/analytics/ngo" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('ngo analytics show food received', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().summary.foodReceivedKg).to.be.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /analytics/volunteer",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{volunteerToken}}" }],
+            "url": { "raw": "{{baseUrl}}/analytics/volunteer" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('volunteer analytics count the completed run', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().summary.deliveries).to.be.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /analytics/admin (platform overview)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/analytics/admin" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('admin analytics load', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().summary.totalUsers).to.be.at.least(1);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8 · Admin",
+      "item": [
+        {
+          "name": "GET /admin/overview",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/overview" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('overview loads', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.have.property('totalUsers');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /admin/users (search + filters)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users?page=1&limit=10&search=API+Test",
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" },
+                { "key": "search", "value": "API Test" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('users listed', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().users.length).to.be.at.least(1);",
+                  "});",
+                  "const json = pm.response.json();",
+                  "if (json.users && json.users.length > 0) {",
+                  "  pm.collectionVariables.set('adminTargetUserId', json.users[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /admin/users/:id (full profile + stats)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/users/{{adminTargetUserId}}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('user detail loads', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().stats).to.have.property('donations');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /admin/ngos (verification queue)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/ngos?verification=PENDING&limit=10",
+              "query": [
+                { "key": "verification", "value": "PENDING" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('ngo queue listed', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "if (json.ngos && json.ngos.length > 0) {",
+                  "  pm.collectionVariables.set('ngoId', json.ngos[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /admin/ngos/:id/verify",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "" },
+            "url": { "raw": "{{baseUrl}}/admin/ngos/{{ngoId}}/verify" },
+            "event": [
+              {
+                "listen": "prerequest",
+                "script": {
+                  "exec": [
+                    "// Capture a PENDING ngo id if not already set.",
+                    "if (!pm.collectionVariables.get('ngoId')) {",
+                    "  const res = await pm.sendRequest({",
+                    "    url: pm.collectionVariables.get('baseUrl') + '/admin/ngos?verification=PENDING&limit=1',",
+                    "    method: 'GET',",
+                    "    header: { 'Authorization': 'Bearer ' + pm.collectionVariables.get('adminToken') }",
+                    "  });",
+                    "  const body = res.json();",
+                    "  if (body.ngos && body.ngos.length > 0) {",
+                    "    pm.collectionVariables.set('ngoId', body.ngos[0].id);",
+                    "  }",
+                    "}"
+                  ],
+                  "type": "text/javascript"
+                }
+              },
+              {
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "pm.test('ngo verified', () => {",
+                    "  pm.response.to.have.status(200);",
+                    "  pm.expect(pm.response.json().ngo.verificationStatus).to.eql('VERIFIED');",
+                    "});"
+                  ],
+                  "type": "text/javascript"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "GET /admin/donations (monitoring)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/donations?page=1&limit=10&status=DELIVERED",
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" },
+                { "key": "status", "value": "DELIVERED" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('admin donation feed loads', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /admin/deliveries (monitoring)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/deliveries?page=1&limit=10&active=true",
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" },
+                { "key": "active", "value": "true" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('admin delivery feed loads', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /admin/reports (analytics rollup)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/reports?range=monthly",
+              "query": [{ "key": "range", "value": "monthly" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('reports load', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /admin/rescue/run (manual rescue sweep)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "" },
+            "url": { "raw": "{{baseUrl}}/admin/rescue/run" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('rescue sweep ran', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json()).to.have.property('rescued');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "9 · Notifications",
+      "item": [
+        {
+          "name": "GET /notifications (donor inbox)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{donorToken}}" }],
+            "url": { "raw": "{{baseUrl}}/notifications?page=1&limit=20" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('notifications listed', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().notifications).to.be.an('array');",
+                  "});",
+                  "const json = pm.response.json();",
+                  "if (json.notifications && json.notifications.length > 0) {",
+                  "  pm.collectionVariables.set('notificationId', json.notifications[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /notifications/:id/read",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{donorToken}}" }],
+            "body": { "mode": "raw", "raw": "" },
+            "url": { "raw": "{{baseUrl}}/notifications/{{notificationId}}/read" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('notification marked read', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /notifications/read-all",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{donorToken}}" }],
+            "body": { "mode": "raw", "raw": "" },
+            "url": { "raw": "{{baseUrl}}/notifications/read-all" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('all marked read', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
