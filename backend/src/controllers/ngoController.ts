@@ -1,0 +1,264 @@
+import type { Request, Response } from 'express'
+
+import { prisma } from '../config/prisma.js'
+import { notifyUsers, NOTIFICATION_TYPES } from '../services/notificationService.js'
+import { haversineKm } from '../utils/geo.js'
+import { HttpError } from '../utils/HttpError.js'
+import { estimateMeals } from '../utils/meals.js'
+import { nearbyDonationsQuerySchema } from '../validators/ngo.js'
+import type { CreateNgoRequestBody } from '../validators/ngo.js'
+
+/**
+ * Phase 18, Step 54 — GET /api/v1/donations/nearby (NGO only).
+ * Returns AVAILABLE donations within `distance` km of the NGO's coordinates,
+ * using the donation's own lat/lng when set and falling back to the donor
+ * profile's. Results are sorted by urgency — highest AI priority first, then
+ * soonest expiry — so the least-shelf-life food surfaces at the top.
+ */
+export async function nearbyDonations(req: Request, res: Response): Promise<void> {
+  const parsed = nearbyDonationsQuerySchema.safeParse(req.query)
+  if (!parsed.success) {
+    throw new HttpError(400, 'VALIDATION_ERROR', JSON.stringify(parsed.error.flatten().fieldErrors))
+  }
+  const { lat, lng, distance, status, priority, page, limit } = parsed.data
+
+  const candidates = await prisma.donation.findMany({
+    where: { status },
+    include: {
+      images: { select: { id: true, imageUrl: true } },
+      category: { select: { name: true } },
+      donor: {
+        select: { organizationName: true, city: true, state: true, latitude: true, longitude: true },
+      },
+      predictions: { orderBy: { createdAt: 'desc' }, take: 1, select: { priority: true } },
+    },
+  })
+
+  const nearby = candidates
+    .map((donation) => {
+      const dLat = donation.latitude ?? donation.donor.latitude
+      const dLng = donation.longitude ?? donation.donor.longitude
+      if (dLat == null || dLng == null) return null
+
+      return {
+        donation,
+        latitude: dLat,
+        longitude: dLng,
+        distanceKm: haversineKm(lat, lng, dLat, dLng),
+        priority: donation.predictions[0]?.priority ?? null,
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .filter((item) => item.distanceKm <= distance && (priority == null || (item.priority ?? 0) >= priority))
+    .sort((a, b) => {
+      // Urgency first: highest priority, then soonest expiry.
+      const pa = a.priority ?? 0
+      const pb = b.priority ?? 0
+      if (pb !== pa) return pb - pa
+      const ea = a.donation.expiryTime?.getTime() ?? Number.POSITIVE_INFINITY
+      const eb = b.donation.expiryTime?.getTime() ?? Number.POSITIVE_INFINITY
+      return ea - eb
+    })
+
+  const total = nearby.length
+  const pageItems = nearby.slice((page - 1) * limit, page * limit)
+  const donations = pageItems.map(({ donation, latitude, longitude, distanceKm, priority }) => ({
+      id: donation.id,
+      foodName: donation.foodName,
+      description: donation.description,
+      quantity: donation.quantity,
+      unit: donation.unit,
+      pickupAddress: donation.pickupAddress,
+      expiryTime: donation.expiryTime,
+      pickupTime: donation.pickupTime,
+      status: donation.status,
+      latitude,
+      longitude,
+      distanceKm: Math.round(distanceKm * 100) / 100,
+      priority,
+      category: donation.category.name,
+      imageUrl: donation.images[0]?.imageUrl ?? null,
+      donorOrganization: donation.donor.organizationName,
+      donorCity: donation.donor.city,
+      donorState: donation.donor.state,
+    }))
+
+  res.json({ donations, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } })
+}
+
+/**
+ * Phase 18, Step 55 — POST /api/v1/ngo/requests.
+ * One-step claim: the NGO's request is created as ACCEPTED and the donation is
+ * marked RESERVED (DonationStatus has no ACCEPTED value — RESERVED is the
+ * claimed state). The request row's `acceptedAt` records when it happened.
+ * Rejecting a non-AVAILABLE donation prevents double-claims.
+ */
+export async function createRequest(req: Request, res: Response): Promise<void> {
+  const user = req.user!
+  if (user.role !== 'NGO') {
+    throw new HttpError(403, 'FORBIDDEN', 'Only NGO accounts can claim donations')
+  }
+
+  const ngo = await prisma.ngo.findUnique({ where: { userId: user.userId } })
+  if (!ngo) {
+    throw new HttpError(409, 'PROFILE_INCOMPLETE', 'NGO profile not found — complete registration first')
+  }
+
+  const { donationId } = req.body as CreateNgoRequestBody
+  const donation = await prisma.donation.findUnique({
+    where: { id: donationId },
+    include: { donor: { select: { userId: true, organizationName: true } } },
+  })
+  if (!donation) {
+    throw new HttpError(404, 'NOT_FOUND', 'Donation not found')
+  }
+  if (donation.status !== 'AVAILABLE') {
+    throw new HttpError(409, 'NOT_AVAILABLE', 'This donation has already been claimed')
+  }
+
+  const request = await prisma.$transaction(async (tx) => {
+    // Atomic claim: the conditional update is the single source of truth. If
+    // another NGO claimed the donation between the pre-check and now, the
+    // update touches 0 rows and the whole transaction rolls back.
+    const claimed = await tx.donation.updateMany({
+      where: { id: donationId, status: 'AVAILABLE' },
+      data: { status: 'RESERVED' },
+    })
+    if (claimed.count === 0) {
+      throw new HttpError(409, 'NOT_AVAILABLE', 'This donation has already been claimed')
+    }
+
+    const created = await tx.ngoRequest.create({
+      data: { ngoId: ngo.id, donationId, status: 'ACCEPTED', acceptedAt: new Date() },
+    })
+    await tx.auditLog.create({
+      data: {
+        userId: user.userId,
+        action: 'ngo.request.accepted',
+        entity: 'ngo_request',
+        entityId: created.id,
+      },
+    })
+    return created
+  })
+
+  // Phase 29, Step 75 — "Donation accepted" in-app notification to the donor.
+  const title = `Donation accepted: ${donation.foodName}`
+  const message =
+    `${ngo.ngoName} accepted your ${donation.foodName} (${donation.quantity} ${donation.unit}) and will arrange pickup.`
+  await notifyUsers([donation.donor.userId], {
+    title,
+    message,
+    type: NOTIFICATION_TYPES.DONATION_ACCEPTED,
+    donationId: donation.id,
+  })
+
+  res.status(201).json({ request })
+}
+
+/**
+ * Lists the authenticated NGO's requests (newest first) with their donations
+ * (Phase 36, Step 91 — ?page=1&limit=20).
+ */
+export async function listRequests(req: Request, res: Response): Promise<void> {
+  const user = req.user!
+  const page = Math.max(Number(req.query.page) || 1, 1)
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100)
+
+  const ngo = await prisma.ngo.findUnique({ where: { userId: user.userId } })
+  if (!ngo) {
+    res.json({ requests: [], pagination: { page, limit, total: 0, totalPages: 0 } })
+    return
+  }
+
+  const where = { ngoId: ngo.id }
+  const [requests, total] = await prisma.$transaction([
+    prisma.ngoRequest.findMany({
+      where,
+      orderBy: { requestedAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+      include: {
+        donation: {
+          include: {
+            images: { select: { id: true, imageUrl: true } },
+            category: { select: { name: true } },
+            donor: { select: { organizationName: true, city: true, state: true } },
+            predictions: { orderBy: { createdAt: 'desc' }, take: 1, select: { priority: true, freshnessScore: true } },
+          },
+        },
+      },
+    }),
+    prisma.ngoRequest.count({ where }),
+  ])
+
+  res.json({ requests, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } })
+}
+
+/**
+ * Phase 18, Step 53 — GET /api/v1/ngo/dashboard.
+ * Aggregates the NGO's headline numbers: accepted food, meals distributed,
+ * people served (1 meal ≈ 1 person), today's completed deliveries, and the
+ * current inventory (accepted food not yet delivered).
+ */
+export async function dashboardStats(req: Request, res: Response): Promise<void> {
+  const user = req.user!
+  const ngo = await prisma.ngo.findUnique({ where: { userId: user.userId } })
+  if (!ngo) {
+    res.json({ acceptedCount: 0, mealsDistributed: 0, peopleServed: 0, todayDeliveries: 0, inventory: [] })
+    return
+  }
+
+  const requests = await prisma.ngoRequest.findMany({
+    where: { ngoId: ngo.id, status: 'ACCEPTED' },
+    include: {
+      donation: {
+        include: {
+          images: { select: { id: true, imageUrl: true } },
+          category: { select: { name: true } },
+          donor: { select: { organizationName: true } },
+          predictions: { orderBy: { createdAt: 'desc' }, take: 1, select: { priority: true, freshnessScore: true } },
+          assignments: { include: { delivery: { select: { status: true, completedAt: true } } } },
+        },
+      },
+    },
+  })
+
+  const delivered = requests.filter((request) => request.donation.status === 'DELIVERED')
+  const mealsDistributed = delivered.reduce(
+    (sum, request) => sum + estimateMeals(request.donation.quantity, request.donation.unit),
+    0,
+  )
+
+  const todayStart = new Date()
+  todayStart.setHours(0, 0, 0, 0)
+  const todayDeliveries = requests.filter((request) =>
+    request.donation.assignments.some(
+      (assignment) => assignment.delivery?.completedAt && assignment.delivery.completedAt >= todayStart,
+    ),
+  ).length
+
+  const inventory = requests
+    .filter((request) => request.donation.status === 'RESERVED' || request.donation.status === 'PICKED_UP')
+    .map(({ donation }) => ({
+      id: donation.id,
+      foodName: donation.foodName,
+      quantity: donation.quantity,
+      unit: donation.unit,
+      status: donation.status,
+      expiryTime: donation.expiryTime,
+      priority: donation.predictions[0]?.priority ?? null,
+      freshnessScore: donation.predictions[0]?.freshnessScore ?? null,
+      category: donation.category.name,
+      imageUrl: donation.images[0]?.imageUrl ?? null,
+      donorOrganization: donation.donor.organizationName,
+    }))
+
+  res.json({
+    acceptedCount: requests.length,
+    mealsDistributed,
+    peopleServed: mealsDistributed,
+    todayDeliveries,
+    inventory,
+  })
+}

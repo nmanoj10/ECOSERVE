@@ -1,13 +1,35 @@
 import { z } from 'zod'
 
-const donationImageSchema = z.object({
-  /** Public ImageKit URL (the client uploads directly; the backend stores the metadata). */
-  url: z.string().url('Invalid image URL'),
+import { env } from '../config/env.js'
+import { donationStatuses } from './statuses.js'
+
+// Phase 35, Step 89 — server-side file validation. Uploads go straight to
+// ImageKit from the browser, but the metadata the backend records is still
+// constrained: only raster web formats, a hard 5 MB ceiling that mirrors the
+// client-side cap (frontend/src/services/imagekit.ts), and URLs that actually
+// belong to the configured ImageKit endpoint (some browsers report `image/jpg`
+// for .jpg files, so it's accepted alongside `image/jpeg`).
+const MAX_IMAGE_FILE_SIZE = 5 * 1024 * 1024 // 5 MB per photo
+const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] as const
+
+export const donationImageSchema = z.object({
+  /**
+   * Public ImageKit URL (the client uploads directly; the backend stores the
+   * metadata). Must be hosted on the configured ImageKit endpoint — this stops
+   * the backend from ever recording metadata for arbitrary external URLs. The
+   * check is skipped while ImageKit is unconfigured (demo mode sends none).
+   */
+  url: z
+    .string()
+    .url('Invalid image URL')
+    .refine((url) => !env.IMAGEKIT_URL_ENDPOINT || url.startsWith(env.IMAGEKIT_URL_ENDPOINT), {
+      message: 'Image URL must be hosted on the configured ImageKit endpoint',
+    }),
   /** ImageKit file id — lets us delete/transform the asset later. */
   fileId: z.string().trim().max(100).optional(),
   fileName: z.string().trim().min(1).max(255),
-  fileSize: z.number().int().positive().optional(),
-  mimeType: z.string().trim().max(100).optional(),
+  fileSize: z.number().int().positive().max(MAX_IMAGE_FILE_SIZE, 'Image exceeds the 5 MB limit').optional(),
+  mimeType: z.enum(ACCEPTED_IMAGE_TYPES).optional(),
 })
 
 export const createDonationSchema = z
@@ -22,6 +44,9 @@ export const createDonationSchema = z
     pickupTime: z.string().datetime({ offset: true }).optional(),
     pickupAddress: z.string().trim().min(1).max(250),
     description: z.string().trim().max(1000).optional(),
+    /** Optional geo pin for the listing — powers the nearby-search (Step 54) + map. */
+    latitude: z.number().min(-90).max(90).optional(),
+    longitude: z.number().min(-180).max(180).optional(),
     images: z.array(donationImageSchema).max(3).default([]),
   })
   .refine((data) => !data.expiryTime || !data.pickupTime || data.expiryTime > data.pickupTime, {
@@ -35,8 +60,6 @@ export const createDonationSchema = z
 
 export type CreateDonationBody = z.infer<typeof createDonationSchema>
 
-const donationStatuses = ['AVAILABLE', 'RESERVED', 'PICKED_UP', 'DELIVERED', 'EXPIRED', 'CANCELLED'] as const
-
 export const listDonationsQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(50).default(10),
@@ -45,6 +68,8 @@ export const listDonationsQuerySchema = z.object({
   status: z.enum(donationStatuses).optional(),
   /** Food category name (case-insensitive). */
   category: z.string().trim().max(100).optional(),
+  /** Phase 36, Step 92 — minimum AI urgency (1–5); keeps listings at or above it. */
+  priority: z.coerce.number().int().min(1).max(5).optional(),
   /** ISO datetime range on the listing's createdAt. */
   dateFrom: z.string().datetime({ offset: true }).optional(),
   dateTo: z.string().datetime({ offset: true }).optional(),

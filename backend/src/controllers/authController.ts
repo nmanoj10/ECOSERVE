@@ -93,6 +93,15 @@ export async function refresh(req: Request, res: Response): Promise<void> {
     throw new HttpError(401, 'REFRESH_TOKEN_REVOKED', 'Refresh token is unknown or revoked')
   }
 
+  // Phase 35, Step 89 — defense in depth: never mint fresh tokens for a
+  // suspended (or missing) account. Suspension normally deletes the session
+  // rows, but this closes the race window between those two operations.
+  const account = await prisma.user.findUnique({ where: { id: session.userId }, select: { status: true } })
+  if (!account || account.status !== 'ACTIVE') {
+    await revokeSessionRow(session.id, session.userId)
+    throw new HttpError(403, 'ACCOUNT_SUSPENDED', 'This account is not active')
+  }
+
   let tokens
   try {
     tokens = await refreshWithGoTrue(refreshToken)

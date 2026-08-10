@@ -197,7 +197,7 @@ export function ImageUpload({ images, onChange, max = 3 }: ImageUploadProps) {
         )}
       </div>
 
-      <input ref={inputRef} type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple className="hidden" onChange={handleInput} />
+      <input ref={inputRef} type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/jpg,image/png,image/webp" multiple className="hidden" onChange={handleInput} />
 
       <p className="mt-2 text-xs text-neutral-500">
         JPG, PNG or WEBP · max {MAX_SIZE_MB} MB each

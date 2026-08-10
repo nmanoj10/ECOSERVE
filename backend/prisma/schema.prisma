@@ -79,11 +79,15 @@ enum AssignmentStatus {
   CANCELLED
 }
 
-/// Lifecycle of a delivery run
+/// Lifecycle of a delivery run (Phase 22 state machine)
 enum DeliveryStatus {
   PENDING
+  AVAILABLE
+  ACCEPTED
+  VOLUNTEER_ASSIGNED
+  PICKED_UP
   IN_TRANSIT
-  COMPLETED
+  DELIVERED
   CANCELLED
 }
 
@@ -105,8 +109,8 @@ model User {
   ngo             Ngo?
   volunteer       Volunteer?
   notifications   Notification[]
-  reviewsGiven    Review[] @relation("Reviewer")
-  reviewsReceived Review[] @relation("Reviewee")
+  reviewsGiven    Review[]       @relation("Reviewer")
+  reviewsReceived Review[]       @relation("Reviewee")
   sessions        Session[]
   auditLogs       AuditLog[]
 
@@ -161,19 +165,19 @@ model Ngo {
 
 /// Volunteer profile (1:1 with a User of role VOLUNTEER)
 model Volunteer {
-  id                String       @id @default(cuid())
-  userId            String       @unique
-  vehicleType       String?
-  vehicleNumber     String?
-  availability      Availability @default(OFFLINE)
-  currentLatitude   Float?
-  currentLongitude  Float?
-  rating            Float        @default(0)
-  totalDeliveries   Int          @default(0)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  id               String       @id @default(cuid())
+  userId           String       @unique
+  vehicleType      String?
+  vehicleNumber    String?
+  availability     Availability @default(OFFLINE)
+  currentLatitude  Float?
+  currentLongitude Float?
+  rating           Float        @default(0)
+  totalDeliveries  Int          @default(0)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
-  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   assignments VolunteerAssignment[]
 
   @@index([availability])
@@ -194,26 +198,32 @@ model FoodCategory {
 
 /// A food donation listing posted by a donor
 model Donation {
-  id             String         @id @default(cuid())
-  donorId        String
-  categoryId     String
-  foodName       String
-  description    String?
-  quantity       Float
-  unit           String
-  preparedAt     DateTime?
-  expiryTime     DateTime?
-  pickupTime     DateTime?
-  pickupAddress  String
-  latitude       Float?
-  longitude      Float?
-  freshnessScore Float? // 0–100, AI-computed
-  safeHours      Float? // hours until unsafe, AI-computed
-  spoilageRisk   String? // LOW | MEDIUM | HIGH, AI-computed
-  priority       Int? // 1–5 urgency, AI-computed
-  status         DonationStatus @default(AVAILABLE)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id               String         @id @default(cuid())
+  donorId          String
+  categoryId       String
+  foodName         String
+  description      String?
+  quantity         Float
+  unit             String
+  preparedAt       DateTime?
+  expiryTime       DateTime?
+  pickupTime       DateTime?
+  pickupAddress    String
+  latitude         Float?
+  longitude        Float?
+  freshnessScore   Float? // 0–100, AI-computed
+  safeHours        Float? // hours until unsafe, AI-computed
+  spoilageRisk     String? // LOW | MEDIUM | HIGH, AI-computed
+  priority         Int? // 1–5 urgency, AI-computed
+  rescueNotifiedAt DateTime? // set when the rescue job (Phase 19) alerted volunteers
+  // Phase 37 — reminder dedupe flags, set once each by jobs/reminderJob.ts so
+  // periodic sweeps never re-remind the same people.
+  pickupReminderSentAt   DateTime? // upcoming-pickup reminder fired
+  requestReminderSentAt  DateTime? // pending-NGO-acceptance reminder fired
+  expiryReminderSentAt   DateTime? // food-nearing-expiry reminder fired
+  status           DonationStatus @default(AVAILABLE)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   donor       Donor                 @relation(fields: [donorId], references: [id], onDelete: Cascade)
   category    FoodCategory          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
@@ -223,6 +233,7 @@ model Donation {
   predictions AiPrediction[]
 
   @@index([status, expiryTime])
+  @@index([status, pickupTime])
   @@index([categoryId, status])
   @@index([donorId, createdAt])
   @@index([createdAt])
@@ -267,7 +278,7 @@ model NgoRequest {
 model VolunteerAssignment {
   id           String           @id @default(cuid())
   volunteerId  String
-  donationId   String
+  donationId   String           @unique
   assignedAt   DateTime         @default(now())
   acceptedAt   DateTime?
   pickupTime   DateTime?
@@ -275,7 +286,7 @@ model VolunteerAssignment {
   status       AssignmentStatus @default(PENDING)
 
   volunteer Volunteer @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
-  donation  Donation @relation(fields: [donationId], references: [id], onDelete: Cascade)
+  donation  Donation  @relation(fields: [donationId], references: [id], onDelete: Cascade)
   delivery  Delivery?
 
   @@index([volunteerId, status])
@@ -284,17 +295,18 @@ model VolunteerAssignment {
 
 /// A delivery run for an accepted volunteer assignment
 model Delivery {
-  id             String          @id @default(cuid())
-  assignmentId   String          @unique
-  pickupLocation String
-  dropLocation   String
-  startedAt      DateTime?
-  completedAt    DateTime?
-  eta            DateTime?
-  distance       Float? // km
-  status         DeliveryStatus  @default(PENDING)
-  proofImage     String?
-  createdAt      DateTime        @default(now())
+  id                    String         @id @default(cuid())
+  assignmentId          String         @unique
+  pickupLocation        String
+  dropLocation          String
+  startedAt             DateTime?
+  completedAt           DateTime?
+  eta                   DateTime?
+  distance              Float? // km
+  status                DeliveryStatus @default(PENDING)
+  proofImage            String?
+  approachingNotifiedAt DateTime? // set once when the "volunteer approaching" alert fired (Phase 29)
+  createdAt             DateTime       @default(now())
 
   assignment VolunteerAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   locations  DeliveryLocation[]

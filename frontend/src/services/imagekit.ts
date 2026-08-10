@@ -7,7 +7,7 @@ const urlEndpoint = import.meta.env.VITE_IMAGEKIT_URL_ENDPOINT
 
 // ── Image validation (Step 46) ────────────────────────────────────────────
 export const MAX_IMAGE_FILE_SIZE = 5 * 1024 * 1024 // 5 MB per photo
-export const ACCEPTED_IMAGE_TYPES: readonly string[] = ['image/jpeg', 'image/png', 'image/webp']
+export const ACCEPTED_IMAGE_TYPES: readonly string[] = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
 export const ACCEPTED_IMAGE_EXTENSIONS: readonly string[] = ['jpg', 'jpeg', 'png', 'webp']
 
 export function isImageKitConfigured() {

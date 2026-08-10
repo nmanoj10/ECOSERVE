@@ -45,6 +45,13 @@ export async function loadAuthUser(req: Request): Promise<void> {
     throw new HttpError(401, 'UNAUTHORIZED', 'User not registered')
   }
 
+  // Phase 32, Step 82 — suspended accounts are blocked platform-wide. The
+  // access token may still be valid, but every protected call goes through
+  // here, so a suspended user is locked out immediately.
+  if (user.status === 'SUSPENDED') {
+    throw new HttpError(403, 'ACCOUNT_SUSPENDED', 'This account has been suspended. Contact an administrator.')
+  }
+
   req.user = { userId: user.id, role: user.role, email: user.email }
 }
 

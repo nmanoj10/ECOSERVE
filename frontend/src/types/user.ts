@@ -17,6 +17,8 @@ export interface NgoProfile {
   address: string
   city: string
   state: string
+  latitude?: number | null
+  longitude?: number | null
   capacity?: number | null
   description?: string | null
   verificationStatus: string

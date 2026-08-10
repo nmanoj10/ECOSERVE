@@ -116,6 +116,8 @@ export async function createDonation(req: Request, res: Response): Promise<void>
         expiryTime: toDate(body.expiryTime),
         pickupTime: toDate(body.pickupTime),
         pickupAddress: body.pickupAddress,
+        latitude: body.latitude ?? null,
+        longitude: body.longitude ?? null,
         images: {
           create: body.images.map((image) => ({
             imageUrl: image.url,
@@ -183,7 +185,7 @@ export async function listDonations(req: Request, res: Response): Promise<void> 
   if (!parsed.success) {
     throw new HttpError(400, 'VALIDATION_ERROR', JSON.stringify(parsed.error.flatten().fieldErrors))
   }
-  const { page, limit, search, status, category, dateFrom, dateTo } = parsed.data
+  const { page, limit, search, status, category, priority, dateFrom, dateTo } = parsed.data
 
   const where: Prisma.DonationWhereInput = {}
 
@@ -198,6 +200,10 @@ export async function listDonations(req: Request, res: Response): Promise<void> 
 
   if (status) where.status = status
   if (category) where.category = { name: { equals: category, mode: 'insensitive' } }
+  // Phase 36, Step 92 — minimum AI urgency. `some` matches any prediction row;
+  // today each donation has exactly one (created at listing time), so this is
+  // equivalent to filtering on the latest score.
+  if (priority) where.predictions = { some: { priority: { gte: priority } } }
   if (search) {
     where.OR = [
       { foodName: { contains: search, mode: 'insensitive' } },

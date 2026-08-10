@@ -3,11 +3,26 @@ import { createServer } from 'node:http'
 import { createApp } from './app.js'
 import { env } from './config/env.js'
 import { prisma } from './config/prisma.js'
+import { startAnalyticsJob } from './jobs/analyticsJob.js'
+import { startExpiryJob } from './jobs/expiryJob.js'
+import { startReminderJob } from './jobs/reminderJob.js'
+import { startRescueJob } from './jobs/rescueJob.js'
+import { setRealtime } from './services/realtime.js'
 import { attachSocketServer } from './sockets/index.js'
 
 const app = createApp()
 const httpServer = createServer(app)
 const io = attachSocketServer(httpServer)
+
+// Shared realtime handle for in-app notifications (rescue, assignments, …).
+setRealtime(io)
+
+// Phase 19 — periodic rescue sweep for unclaimed expiring food.
+startRescueJob()
+// Phase 37 — expiry, reminder, and daily analytics background jobs.
+startExpiryJob()
+startReminderJob()
+startAnalyticsJob()
 
 httpServer.listen(env.PORT, () => {
   console.log(`🚀 Ecoserve backend listening on http://localhost:${env.PORT}`)
