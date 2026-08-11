@@ -22,7 +22,7 @@ import { runAnalyticsNow } from '../src/jobs/analyticsJob.js'
 
 const DRY_RUN = process.env.DRY_RUN !== '0'
 
-/** Emails created for testing by Steps 97/99 (and ad-hoc probes). */
+/** Emails created for testing by Steps 97/99, 116 (and ad-hoc probes). */
 const TEST_EMAIL_PATTERNS = [
   '%@ecoserve.test', // Step 97: donor.api / ngo.api / volunteer.api / admin.api
   'e2e.%', // Step 99: e2e.<role>.<timestamp>@gmail.com + e2e.probe.*@gmail.com
@@ -34,7 +34,8 @@ function matchesTestEmail(email: string): boolean {
   return (
     lower.endsWith('@ecoserve.test') ||
     lower.startsWith('e2e.') ||
-    lower.startsWith('e2e-probe-')
+    lower.startsWith('e2e-probe-') ||
+    lower.startsWith('live.') // Step 116: live.<role>.<timestamp>@gmail.com (setup-live-tracking.ts)
   )
 }
 
@@ -127,7 +128,15 @@ async function main(): Promise<void> {
 
   // ── 1. Platform database ──────────────────────────────────────────────────
   const testUsers = await prisma.user.findMany({
-    where: { OR: TEST_EMAIL_PATTERNS.map((p) => ({ email: { contains: p.slice(1, -1), mode: 'insensitive' as const } })) },
+    where: {
+      OR: [
+        ...TEST_EMAIL_PATTERNS.map((p) => ({ email: { contains: p.slice(1, -1), mode: 'insensitive' as const } })),
+        // Step 116 — live-tracking test accounts (setup-live-tracking.ts).
+        // startsWith avoids matching real addresses that merely contain
+        // "live." (e.g. olive.smith@…), which a contains filter would catch.
+        { email: { startsWith: 'live.', mode: 'insensitive' as const } },
+      ],
+    },
     select: { id: true, email: true, role: true },
   })
 
