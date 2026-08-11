@@ -13,6 +13,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import LoginPage from '@/pages/auth/LoginPage'
 import RegisterPage from '@/pages/auth/RegisterPage'
 import NewDonationPage from '@/pages/donor/NewDonationPage'
+import DonorProfilePage from '@/pages/donor/ProfilePage'
 import { ToastProvider } from '@/components/ui/Toast'
 import { fetchMe, registerUser } from '@/api/auth'
 import { api } from '@/api/client'
@@ -27,7 +28,9 @@ const { supabaseMock } = vi.hoisted(() => ({
       getSession: vi.fn(),
       onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
       signInWithPassword: vi.fn(),
+      signInWithOAuth: vi.fn(),
       signUp: vi.fn(),
+      resetPasswordForEmail: vi.fn(),
       signOut: vi.fn(),
       refreshSession: vi.fn(),
     },
@@ -73,6 +76,10 @@ vi.mock('@/components/maps/LiveTrackingMap', () => ({
   LiveTrackingMap: () => null,
 }))
 
+vi.mock('@/components/maps/LocationPinMap', () => ({
+  LocationPinMap: () => null,
+}))
+
 const mockedFetchMe = vi.mocked(fetchMe)
 const mockedRegisterUser = vi.mocked(registerUser)
 const mockedApi = vi.mocked(api)
@@ -81,6 +88,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   supabaseMock.auth.getSession.mockResolvedValue({ data: { session: null }, error: null } as never)
   supabaseMock.auth.signInWithPassword.mockResolvedValue({ error: null } as never)
+  supabaseMock.auth.signInWithOAuth.mockResolvedValue({ data: {}, error: null } as never)
+  supabaseMock.auth.resetPasswordForEmail.mockResolvedValue({ data: {}, error: null } as never)
   supabaseMock.auth.signUp.mockResolvedValue({ data: { session: null }, error: null } as never)
 })
 
@@ -124,6 +133,19 @@ function renderNewDonation() {
   )
 }
 
+function renderDonorProfile() {
+  return render(
+    <MemoryRouter initialEntries={['/donor/profile']}>
+      <ToastProvider>
+        <Routes>
+          <Route path="/donor/profile" element={<DonorProfilePage />} />
+          <Route path="/donor" element={<div>Donor dashboard probe</div>} />
+        </Routes>
+      </ToastProvider>
+    </MemoryRouter>,
+  )
+}
+
 // ── Login ───────────────────────────────────────────────────────────────────
 
 describe('LoginPage', () => {
@@ -131,7 +153,7 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderLogin()
 
-    await user.click(screen.getByRole('button', { name: /log in/i }))
+    await user.click(screen.getByRole('button', { name: /log ?in/i }))
 
     expect(await screen.findByText('Enter a valid email')).toBeInTheDocument()
     expect(screen.getByText('Password is required')).toBeInTheDocument()
@@ -145,9 +167,9 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByLabelText('Email'), 'alice@example.com')
+    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
     await user.type(screen.getByLabelText('Password'), 'wrong-password')
-    await user.click(screen.getByRole('button', { name: /log in/i }))
+    await user.click(screen.getByRole('button', { name: /log ?in/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid login credentials')
     expect(mockedFetchMe).not.toHaveBeenCalled()
@@ -158,9 +180,9 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByLabelText('Email'), 'alice@example.com')
+    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
     await user.type(screen.getByLabelText('Password'), 'password123')
-    await user.click(screen.getByRole('button', { name: /log in/i }))
+    await user.click(screen.getByRole('button', { name: /log ?in/i }))
 
     expect(await screen.findByText('Donor dashboard probe')).toBeInTheDocument()
     expect(mockedFetchMe).toHaveBeenCalledTimes(1)
@@ -171,9 +193,9 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderLogin('/login', { from: '/donor/new' })
 
-    await user.type(screen.getByLabelText('Email'), 'alice@example.com')
+    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
     await user.type(screen.getByLabelText('Password'), 'password123')
-    await user.click(screen.getByRole('button', { name: /log in/i }))
+    await user.click(screen.getByRole('button', { name: /log ?in/i }))
 
     expect(await screen.findByText('New donation probe')).toBeInTheDocument()
   })
@@ -183,9 +205,9 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     renderLogin()
 
-    await user.type(screen.getByLabelText('Email'), 'alice@example.com')
+    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
     await user.type(screen.getByLabelText('Password'), 'password123')
-    await user.click(screen.getByRole('button', { name: /log in/i }))
+    await user.click(screen.getByRole('button', { name: /log ?in/i }))
 
     expect(await screen.findByText('Register page probe')).toBeInTheDocument()
   })
@@ -202,6 +224,41 @@ describe('LoginPage', () => {
 
     await user.click(screen.getByRole('button', { name: 'Hide password' }))
     expect(password.type).toBe('password')
+  })
+
+  it('starts Google OAuth when "Continue with Google" is clicked', async () => {
+    const user = userEvent.setup()
+    renderLogin()
+
+    await user.click(screen.getByRole('button', { name: /continue with google/i }))
+
+    expect(supabaseMock.auth.signInWithOAuth).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'google' }),
+    )
+  })
+
+  it('asks for an email before sending a password reset link', async () => {
+    const user = userEvent.setup()
+    renderLogin()
+
+    await user.click(screen.getByRole('button', { name: /forgot password/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter your email address first')
+    expect(supabaseMock.auth.resetPasswordForEmail).not.toHaveBeenCalled()
+  })
+
+  it('sends a password reset link when the email is filled in', async () => {
+    const user = userEvent.setup()
+    renderLogin()
+
+    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
+    await user.click(screen.getByRole('button', { name: /forgot password/i }))
+
+    expect(supabaseMock.auth.resetPasswordForEmail).toHaveBeenCalledWith(
+      'alice@example.com',
+      expect.any(Object),
+    )
+    expect(await screen.findByRole('status')).toHaveTextContent(/password reset link to alice@example.com/i)
   })
 })
 
@@ -383,5 +440,118 @@ describe('NewDonationPage', () => {
     // Grains default → ~6 meals/kg → 240 meals.
     expect(await screen.findByText('~240')).toBeInTheDocument()
     expect(screen.getByText('meals served')).toBeInTheDocument()
+  })
+
+  it('requires both latitude and longitude together before listing', async () => {
+    const user = userEvent.setup()
+    renderNewDonation()
+
+    await user.type(screen.getByLabelText(/food name/i), 'Paneer Biryani')
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: '10' } })
+    fireEvent.change(screen.getByLabelText(/^expiry/i), { target: { value: '2026-08-10T16:00' } })
+    fireEvent.change(screen.getByLabelText(/pickup time/i), { target: { value: '2026-08-10T14:00' } })
+    await user.type(screen.getByLabelText(/pickup address/i), '12 MG Road, Bengaluru')
+    // Only one half of the pin — must be rejected.
+    fireEvent.change(screen.getByLabelText(/latitude/i), { target: { value: '12.9716' } })
+    await user.click(screen.getByRole('button', { name: /list donation/i }))
+
+    expect(await screen.findByText(/Set both latitude and longitude/i)).toBeInTheDocument()
+    expect(mockedApi.post).not.toHaveBeenCalled()
+  })
+
+  it('sends the location pin with the listing when both coordinates are set', async () => {
+    mockedApi.post.mockResolvedValue({ data: { donation: { id: 'don-1' } } } as never)
+    const user = userEvent.setup()
+    renderNewDonation()
+
+    await user.type(screen.getByLabelText(/food name/i), 'Paneer Biryani')
+    fireEvent.change(screen.getByLabelText(/quantity/i), { target: { value: '10' } })
+    fireEvent.change(screen.getByLabelText(/^expiry/i), { target: { value: '2026-08-10T16:00' } })
+    fireEvent.change(screen.getByLabelText(/pickup time/i), { target: { value: '2026-08-10T14:00' } })
+    await user.type(screen.getByLabelText(/pickup address/i), '12 MG Road, Bengaluru')
+    fireEvent.change(screen.getByLabelText(/latitude/i), { target: { value: '12.9716' } })
+    fireEvent.change(screen.getByLabelText(/longitude/i), { target: { value: '77.5946' } })
+    await user.click(screen.getByRole('button', { name: /list donation/i }))
+
+    expect(await screen.findByText('Donor dashboard probe')).toBeInTheDocument()
+    expect(mockedApi.post).toHaveBeenCalledWith(
+      '/v1/donations',
+      expect.objectContaining({ latitude: 12.9716, longitude: 77.5946 }),
+    )
+  })
+})
+
+// ── Donor profile ───────────────────────────────────────────────────────────
+
+describe('DonorProfilePage', () => {
+  const donorProfile = {
+    organizationName: 'Spice House',
+    organizationType: 'Restaurant',
+    address: '12 MG Road',
+    city: 'Bengaluru',
+    state: 'Karnataka',
+    latitude: null,
+    longitude: null,
+  }
+
+  beforeEach(() => {
+    mockedFetchMe.mockResolvedValue({ user: { donor: donorProfile } } as never)
+  })
+
+  it('prefills the form from the profile and requires both coordinates together', async () => {
+    const user = userEvent.setup()
+    renderDonorProfile()
+
+    expect(await screen.findByLabelText(/organization name/i)).toHaveValue('Spice House')
+
+    // Only one half of the pin — must be rejected.
+    fireEvent.change(screen.getByLabelText(/latitude/i), { target: { value: '12.9716' } })
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+
+    expect(await screen.findByText(/Set both latitude and longitude/i)).toBeInTheDocument()
+    expect(mockedApi.patch).not.toHaveBeenCalled()
+  })
+
+  it('saves the location pin with the profile and shows a success toast', async () => {
+    mockedApi.patch.mockResolvedValue({
+      data: { donor: { ...donorProfile, latitude: 12.9716, longitude: 77.5946 } },
+    } as never)
+    const user = userEvent.setup()
+    renderDonorProfile()
+
+    await screen.findByLabelText(/organization name/i)
+    fireEvent.change(screen.getByLabelText(/latitude/i), { target: { value: '12.9716' } })
+    fireEvent.change(screen.getByLabelText(/longitude/i), { target: { value: '77.5946' } })
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+
+    expect(await screen.findByText('Profile updated')).toBeInTheDocument()
+    expect(mockedApi.patch).toHaveBeenCalledWith(
+      '/v1/donor/profile',
+      expect.objectContaining({ latitude: 12.9716, longitude: 77.5946, organizationName: 'Spice House' }),
+    )
+  })
+
+  it('clears a previously-set pin when both coordinates are blanked', async () => {
+    mockedFetchMe.mockResolvedValue({
+      user: { donor: { ...donorProfile, latitude: 12.9716, longitude: 77.5946 } },
+    } as never)
+    mockedApi.patch.mockResolvedValue({
+      data: { donor: { ...donorProfile, latitude: null, longitude: null } },
+    } as never)
+    const user = userEvent.setup()
+    renderDonorProfile()
+
+    const lat = (await screen.findByLabelText(/latitude/i)) as HTMLInputElement
+    // number inputs report their value as a number
+    expect(lat).toHaveValue(12.9716)
+    fireEvent.change(lat, { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText(/longitude/i), { target: { value: '' } })
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+
+    expect(await screen.findByText('Profile updated')).toBeInTheDocument()
+    expect(mockedApi.patch).toHaveBeenCalledWith(
+      '/v1/donor/profile',
+      expect.objectContaining({ latitude: null, longitude: null }),
+    )
   })
 })

@@ -10,9 +10,12 @@ import { ProtectedRoute } from '@/routes/ProtectedRoute'
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/auth/RegisterPage'))
 const DonorDashboardPage = lazy(() => import('@/pages/donor/DashboardPage'))
+const DonorProfilePage = lazy(() => import('@/pages/donor/ProfilePage'))
 const NewDonationPage = lazy(() => import('@/pages/donor/NewDonationPage'))
 const NgoDashboardPage = lazy(() => import('@/pages/ngo/DashboardPage'))
+const NgoProfilePage = lazy(() => import('@/pages/ngo/ProfilePage'))
 const VolunteerDashboardPage = lazy(() => import('@/pages/volunteer/DashboardPage'))
+const VolunteerProfilePage = lazy(() => import('@/pages/volunteer/ProfilePage'))
 const AdminDashboardPage = lazy(() => import('@/pages/admin/DashboardPage'))
 const AdminUsersPage = lazy(() => import('@/pages/admin/UsersPage'))
 const AdminNgoVerificationPage = lazy(() => import('@/pages/admin/NgoVerificationPage'))
@@ -91,6 +94,14 @@ export default function App() {
           }
         />
         <Route
+          path="/donor/profile"
+          element={
+            <ProtectedRoute>
+              <DonorProfilePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/ngo"
           element={
             <ProtectedRoute>
@@ -99,10 +110,26 @@ export default function App() {
           }
         />
         <Route
+          path="/ngo/profile"
+          element={
+            <ProtectedRoute>
+              <NgoProfilePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/volunteer"
           element={
             <ProtectedRoute>
               <VolunteerDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/volunteer/profile"
+          element={
+            <ProtectedRoute>
+              <VolunteerProfilePage />
             </ProtectedRoute>
           }
         />

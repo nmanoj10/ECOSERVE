@@ -1,3 +1,5 @@
+import type { NgoProfile } from '@/types/user'
+
 import { api } from './client'
 
 /** A donation within range of the NGO (Phase 18, Step 54). */
@@ -109,5 +111,24 @@ export async function fetchNgoRequests(params?: { page?: number; limit?: number 
 /** Step 53 — headline stats + inventory for the NGO dashboard. */
 export async function fetchNgoDashboard(): Promise<NgoDashboardStats> {
   const { data } = await api.get<NgoDashboardStats>('/v1/ngo/dashboard')
+  return data
+}
+
+/**
+ * PATCH — updates the NGO's own profile. The location pin (lat/lng) powers
+ * the nearby-donations search and the surplus map on the dashboard.
+ */
+export async function updateNgoProfile(payload: {
+  ngoName?: string
+  registrationNumber?: string
+  address?: string
+  city?: string
+  state?: string
+  latitude?: number | null
+  longitude?: number | null
+  capacity?: number | null
+  description?: string | null
+}): Promise<{ ngo: NgoProfile }> {
+  const { data } = await api.patch<{ ngo: NgoProfile }>('/v1/ngo/profile', payload)
   return data
 }

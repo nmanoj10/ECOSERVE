@@ -452,7 +452,15 @@ export default function NgoDashboardPage() {
                     description={
                       coords
                         ? 'New listings within 25 km will appear here automatically, sorted by urgency.'
-                        : 'Set latitude/longitude on your NGO profile so we can find donations around you.'
+                        : 'Set your location on your NGO profile so we can find donations around you.'
+                    }
+                    action={
+                      !coords ? (
+                        <Button to="/ngo/profile" size="sm" variant="secondary">
+                          <MapPin className="size-3.5" />
+                          Set my location
+                        </Button>
+                      ) : undefined
                     }
                   />
                 ) : (
@@ -537,7 +545,13 @@ export default function NgoDashboardPage() {
                   <EmptyState
                     icon={MapPin}
                     title="Location not set"
-                    description="Add latitude/longitude to your NGO profile to see nearby donations on the map."
+                    description="Add your location to your NGO profile to see nearby donations on the map."
+                    action={
+                      <Button to="/ngo/profile" size="sm" variant="secondary">
+                        <MapPin className="size-3.5" />
+                        Set my location
+                      </Button>
+                    }
                     className="py-10"
                   />
                 )}

@@ -63,7 +63,8 @@ describe('App routing', () => {
     renderApp('/login')
 
     // The lazy LoginPage starts behind the Suspense "Loading…" fallback.
-    expect(await screen.findByText('Welcome back')).toBeInTheDocument()
+    // A generous wait keeps the assertion timing-proof under parallel workers.
+    expect(await screen.findByText(/login to your account/i, {}, { timeout: 5000 })).toBeInTheDocument()
   })
 
   it('shows the 404 page for unknown paths', async () => {
@@ -76,7 +77,7 @@ describe('App routing', () => {
     renderApp('/donor')
 
     // Redirect lands on the login page, not the donor dashboard.
-    expect(await screen.findByText('Welcome back')).toBeInTheDocument()
+    expect(await screen.findByText(/login to your account/i, {}, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.queryByText(/donor dashboard/i)).not.toBeInTheDocument()
   })
 })

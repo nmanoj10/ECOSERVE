@@ -56,9 +56,9 @@ async function loginAs(browser: Browser, user: TestUser, dashboardPath: string):
   const context = await browser.newContext({ baseURL: env.frontendUrl })
   const page = await context.newPage()
   await page.goto('/login')
-  await page.getByLabel('Email', { exact: true }).fill(user.email)
-  await page.getByLabel('Password', { exact: true }).fill(user.password)
-  await page.getByRole('button', { name: /log in/i }).click()
+  await page.getByLabel('Email Address').fill(user.email)
+  await page.getByLabel('Password').fill(user.password)
+  await page.getByRole('button', { name: /log ?in/i }).click()
   await expect(page).toHaveURL(new RegExp(dashboardPath), { timeout: 45_000 })
   return page
 }

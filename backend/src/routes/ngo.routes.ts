@@ -1,10 +1,10 @@
 import { Router } from 'express'
 
-import { createRequest, dashboardStats, listRequests } from '../controllers/ngoController.js'
+import { createRequest, dashboardStats, listRequests, updateProfile } from '../controllers/ngoController.js'
 import { authRequired } from '../middleware/auth.js'
 import { authorize } from '../middleware/authorize.js'
 import { validate } from '../middleware/validate.js'
-import { createNgoRequestSchema } from '../validators/ngo.js'
+import { createNgoRequestSchema, updateNgoProfileSchema } from '../validators/ngo.js'
 
 export const ngoRoutes = Router()
 
@@ -14,3 +14,4 @@ ngoRoutes.use(authRequired, authorize('NGO'))
 ngoRoutes.get('/requests', listRequests)
 ngoRoutes.post('/requests', validate(createNgoRequestSchema), createRequest)
 ngoRoutes.get('/dashboard', dashboardStats)
+ngoRoutes.patch('/profile', validate(updateNgoProfileSchema), updateProfile)

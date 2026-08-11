@@ -2,11 +2,12 @@ import type { Request, Response } from 'express'
 
 import { prisma } from '../config/prisma.js'
 import { notifyUsers, NOTIFICATION_TYPES } from '../services/notificationService.js'
+import { isUniqueViolation } from '../services/sessionService.js'
 import { haversineKm } from '../utils/geo.js'
 import { HttpError } from '../utils/HttpError.js'
 import { estimateMeals } from '../utils/meals.js'
 import { nearbyDonationsQuerySchema } from '../validators/ngo.js'
-import type { CreateNgoRequestBody } from '../validators/ngo.js'
+import type { CreateNgoRequestBody, UpdateNgoProfileBody } from '../validators/ngo.js'
 
 /**
  * Phase 18, Step 54 — GET /api/v1/donations/nearby (NGO only).
@@ -84,6 +85,48 @@ export async function nearbyDonations(req: Request, res: Response): Promise<void
     }))
 
   res.json({ donations, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } })
+}
+
+/**
+ * PATCH /api/v1/ngo/profile — updates the NGO's own profile. The location
+ * fields (address/city/state + lat/lng pin) power the nearby-donations search
+ * and the surplus map on the dashboard; sending `null` clears a pin.
+ */
+export async function updateProfile(req: Request, res: Response): Promise<void> {
+  const user = req.user!
+  const body = req.body as UpdateNgoProfileBody
+
+  const ngo = await prisma.ngo.findUnique({ where: { userId: user.userId } })
+  if (!ngo) {
+    throw new HttpError(404, 'NOT_FOUND', 'NGO profile not found')
+  }
+
+  try {
+    const updated = await prisma.ngo.update({
+      where: { id: ngo.id },
+      data: {
+        ...(body.ngoName !== undefined && { ngoName: body.ngoName }),
+        ...(body.registrationNumber !== undefined && { registrationNumber: body.registrationNumber }),
+        ...(body.address !== undefined && { address: body.address }),
+        ...(body.city !== undefined && { city: body.city }),
+        ...(body.state !== undefined && { state: body.state }),
+        ...(body.latitude !== undefined && { latitude: body.latitude }),
+        ...(body.longitude !== undefined && { longitude: body.longitude }),
+        ...(body.capacity !== undefined && { capacity: body.capacity }),
+        ...(body.description !== undefined && { description: body.description }),
+      },
+    })
+    await prisma.auditLog.create({
+      data: { userId: user.userId, action: 'ngo.profile.updated', entity: 'ngo', entityId: ngo.id },
+    })
+    res.json({ ngo: updated })
+  } catch (err) {
+    // registrationNumber is unique platform-wide — surface a clear message.
+    if (isUniqueViolation(err)) {
+      throw new HttpError(409, 'DUPLICATE_REGISTRATION', 'An NGO with that registration number already exists')
+    }
+    throw err
+  }
 }
 
 /**

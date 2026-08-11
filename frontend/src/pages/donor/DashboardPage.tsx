@@ -8,11 +8,9 @@ import {
   Leaf,
   Lightbulb,
   MapPin,
-  MonitorSmartphone,
   PackageCheck,
   Recycle,
   Sparkles,
-  Store,
   TrendingUp,
   Truck,
   Users,
@@ -37,7 +35,7 @@ import {
 } from 'recharts'
 
 import { fetchDonorAnalytics, type DonorAnalytics } from '@/api/analytics'
-import { fetchMe, listSessions, revokeSession, type SessionInfo } from '@/api/auth'
+import { fetchMe } from '@/api/auth'
 import { fetchDonations, type DonationListItem } from '@/api/donations'
 import { fetchActiveDeliveries, type ActiveDelivery } from '@/api/volunteer'
 import DashboardShell from '@/components/layout/DashboardShell'
@@ -46,12 +44,10 @@ import { CountUp } from '@/components/home/CountUp'
 import { Badge, type BadgeVariant } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
-import { Dialog } from '@/components/ui/Dialog'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs'
 import { useToast } from '@/components/ui/Toast'
 import { LiveTrackingMap } from '@/components/maps/LiveTrackingMap'
 import { useAuth } from '@/hooks/useAuth'
@@ -163,12 +159,9 @@ export default function DonorDashboardPage() {
   const { user } = useAuth()
   const { toast } = useToast()
   const navigate = useNavigate()
-  const [tab, setTab] = useState('overview')
   const [profile, setProfile] = useState<UserProfile | null>(null)
-  const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [revoking, setRevoking] = useState<SessionInfo | null>(null)
   const [read, setRead] = useState<Set<string>>(new Set())
   const [activeDeliveries, setActiveDeliveries] = useState<ActiveDelivery[]>([])
   const [analytics, setAnalytics] = useState<DonorAnalytics | null>(null)
@@ -179,15 +172,13 @@ export default function DonorDashboardPage() {
     setLoading(true)
     setError(null)
     try {
-      const [{ user: me }, { sessions: s }, { deliveries }, analytics, donationsPage] = await Promise.all([
+      const [{ user: me }, { deliveries }, analytics, donationsPage] = await Promise.all([
         fetchMe(),
-        listSessions(),
         fetchActiveDeliveries().catch(() => ({ deliveries: [] })),
         fetchDonorAnalytics().catch(() => null),
         fetchDonations({ limit: 5 }).catch(() => null),
       ])
       setProfile(me)
-      setSessions(s)
       setActiveDeliveries(deliveries)
       setAnalytics(analytics)
       setRecentDonations(donationsPage?.donations ?? [])
@@ -205,13 +196,6 @@ export default function DonorDashboardPage() {
   useEffect(() => {
     load()
   }, [load])
-
-  const handleRevoke = async () => {
-    if (!revoking) return
-    await revokeSession(revoking.id)
-    setSessions((prev) => prev.filter((s) => s.id !== revoking.id))
-    toast({ variant: 'success', title: 'Session revoked', description: 'That device is signed out on its next request.' })
-  }
 
   const markRead = (id: string) => {
     setRead((prev) => {
@@ -295,12 +279,7 @@ export default function DonorDashboardPage() {
             </Button>
           </div>
 
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="mb-6">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="account">Account &amp; security</TabsTrigger>
-            </TabsList>
-            <TabsContent value="overview" className="space-y-4">
+          <div className="space-y-4">
               {/* KPI row */}
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 {loading || !analytics
@@ -743,144 +722,9 @@ export default function DonorDashboardPage() {
                 </CardContent>
               </Card>
 
-            </TabsContent>
-
-            {/* Account & security */}
-            <TabsContent value="account" className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Account</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {loading ? (
-                      <div className="space-y-3">
-                        <Skeleton className="h-4 w-2/3" />
-                        <Skeleton className="h-4 w-3/4" />
-                        <Skeleton className="h-4 w-1/2" />
-                      </div>
-                    ) : (
-                      <dl className="space-y-3 text-sm">
-                        <div className="flex items-center justify-between gap-4">
-                          <dt className="text-neutral-500">Name</dt>
-                          <dd className="font-medium">{profile?.fullName ?? user?.user_metadata?.full_name ?? '—'}</dd>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <dt className="text-neutral-500">Email</dt>
-                          <dd className="font-medium">{profile?.email ?? user?.email ?? '—'}</dd>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <dt className="text-neutral-500">Status</dt>
-                          <dd>
-                            <Badge variant={profile?.status === 'ACTIVE' ? 'success' : 'neutral'} dot>
-                              {profile?.status ?? '—'}
-                            </Badge>
-                          </dd>
-                        </div>
-                      </dl>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center gap-2">
-                      <Store className="size-4 text-brand-600" />
-                      <CardTitle>Organization</CardTitle>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    {loading ? (
-                      <div className="space-y-3">
-                        <Skeleton className="h-4 w-1/2" />
-                        <Skeleton className="h-4 w-2/3" />
-                      </div>
-                    ) : profile?.donor ? (
-                      <dl className="space-y-3 text-sm">
-                        <div className="flex items-center justify-between gap-4">
-                          <dt className="text-neutral-500">Name</dt>
-                          <dd className="font-medium">{profile.donor.organizationName}</dd>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <dt className="text-neutral-500">Type</dt>
-                          <dd className="font-medium">{profile.donor.organizationType}</dd>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <dt className="text-neutral-500">Location</dt>
-                          <dd className="font-medium">
-                            {profile.donor.city}, {profile.donor.state}
-                          </dd>
-                        </div>
-                      </dl>
-                    ) : (
-                      <p className="text-sm text-neutral-500">No donor profile found.</p>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Card>
-                <CardHeader>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <MonitorSmartphone className="size-4 text-brand-600" />
-                      <CardTitle>Active sessions</CardTitle>
-                    </div>
-                    <CardDescription>
-                      Revoking a session invalidates its refresh token — that device is signed out on its next request.
-                    </CardDescription>
-                  </div>
-                  <Badge variant="brand">{sessions.length}</Badge>
-                </CardHeader>
-                <CardContent>
-                  {loading ? (
-                    <div className="space-y-3">
-                      <Skeleton className="h-10 w-full" />
-                      <Skeleton className="h-10 w-full" />
-                    </div>
-                  ) : sessions.length === 0 ? (
-                    <p className="text-sm text-neutral-500">No active sessions recorded yet.</p>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Device</TableHead>
-                          <TableHead>Created</TableHead>
-                          <TableHead>Expires</TableHead>
-                          <TableHead className="text-right">Action</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {sessions.map((session, i) => (
-                          <TableRow key={session.id}>
-                            <TableCell className="font-medium text-neutral-900">Session {i + 1}</TableCell>
-                            <TableCell>{new Date(session.createdAt).toLocaleString()}</TableCell>
-                            <TableCell>{new Date(session.expiresAt).toLocaleDateString()}</TableCell>
-                            <TableCell className="text-right">
-                              <Button variant="outline" size="sm" onClick={() => setRevoking(session)}>
-                                Revoke
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+          </div>
         </>
       )}
-
-      <Dialog
-        open={revoking !== null}
-        onClose={() => setRevoking(null)}
-        title="Revoke this session?"
-        description="The device will be signed out the next time it tries to refresh its token. You can sign in again anytime."
-        confirmLabel="Revoke session"
-        onConfirm={handleRevoke}
-      />
     </DashboardShell>
   )
 }

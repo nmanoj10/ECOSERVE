@@ -28,6 +28,9 @@ export interface VolunteerProfile {
   vehicleType?: string | null
   vehicleNumber?: string | null
   availability: string
+  /** Live location — used to match rescue alerts and as the delivery drop-off. */
+  currentLatitude?: number | null
+  currentLongitude?: number | null
   rating: number
   totalDeliveries: number
 }

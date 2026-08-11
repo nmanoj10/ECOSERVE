@@ -1,3 +1,5 @@
+import type { VolunteerProfile } from '@/types/user'
+
 import { api } from './client'
 
 /** GPS sample sent to the backend during an active delivery (Phase 25, Step 66). */
@@ -94,6 +96,22 @@ export async function updateVolunteerAvailability(
   const { data } = await api.patch<{ volunteer: { availability: VolunteerAvailability } }>('/v1/volunteer/availability', {
     availability,
   })
+  return data
+}
+
+/**
+ * PATCH — updates the volunteer's own profile (vehicle details + live location
+ * pin used by rescue matching and the delivery drop-off). Returns the full
+ * refreshed volunteer profile.
+ */
+export async function updateVolunteerProfile(payload: {
+  vehicleType?: string | null
+  vehicleNumber?: string | null
+  availability?: VolunteerAvailability
+  currentLatitude?: number | null
+  currentLongitude?: number | null
+}): Promise<{ volunteer: VolunteerProfile }> {
+  const { data } = await api.patch<{ volunteer: VolunteerProfile }>('/v1/volunteer/profile', payload)
   return data
 }
 

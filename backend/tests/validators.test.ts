@@ -12,8 +12,10 @@ import { refreshSchema } from '../src/validators/auth.js'
 import { createDonationSchema, donationImageSchema, listDonationsQuerySchema } from '../src/validators/donation.js'
 import { createAssignmentSchema, recommendQuerySchema } from '../src/validators/assignment.js'
 import { registerSchema } from '../src/validators/register.js'
-import { updateAvailabilitySchema } from '../src/validators/volunteer.js'
-import { createNgoRequestSchema, nearbyDonationsQuerySchema } from '../src/validators/ngo.js'
+import { updateAvailabilitySchema, updateVolunteerProfileSchema } from '../src/validators/volunteer.js'
+import { createNgoRequestSchema, nearbyDonationsQuerySchema, updateNgoProfileSchema } from '../src/validators/ngo.js'
+import { updateDonorProfileSchema } from '../src/validators/donor.js'
+import { reverseGeocodeQuerySchema } from '../src/validators/geo.js'
 import { submitLocationSchema } from '../src/validators/location.js'
 import {
   listAdminDeliveriesQuerySchema,
@@ -333,6 +335,118 @@ describe('NGO validators', () => {
   it('accepts a claim request with a donation id', () => {
     expect(createNgoRequestSchema.safeParse({ donationId: 'don-1' }).success).toBe(true)
     expect(createNgoRequestSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('updateNgoProfileSchema — accepts a partial location-only update', () => {
+    const result = updateNgoProfileSchema.safeParse({ latitude: 12.9716, longitude: 77.5946 })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.latitude).toBe(12.9716)
+      expect(result.data.longitude).toBe(77.5946)
+      expect(result.data.ngoName).toBeUndefined()
+    }
+  })
+
+  it('updateNgoProfileSchema — accepts a full profile update', () => {
+    const result = updateNgoProfileSchema.safeParse({
+      ngoName: 'Hope NGO',
+      registrationNumber: 'NG-2',
+      address: '12 MG Road',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      latitude: 12.93,
+      longitude: 77.62,
+      capacity: 500,
+      description: 'Feeding families across the city.',
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('updateNgoProfileSchema — accepts null to clear the pin, rejects bad coords', () => {
+    expect(updateNgoProfileSchema.safeParse({ latitude: null, longitude: null }).success).toBe(true)
+    expect(updateNgoProfileSchema.safeParse({ latitude: 91, longitude: 0 }).success).toBe(false)
+    expect(updateNgoProfileSchema.safeParse({ longitude: -181 }).success).toBe(false)
+    expect(updateNgoProfileSchema.safeParse({ capacity: 0 }).success).toBe(false)
+    expect(updateNgoProfileSchema.safeParse({ capacity: 10.5 }).success).toBe(false)
+    expect(updateNgoProfileSchema.safeParse({ ngoName: '' }).success).toBe(false)
+  })
+
+  it('updateNgoProfileSchema — rejects a half-set pin (lat without lng)', () => {
+    expect(updateNgoProfileSchema.safeParse({ latitude: 12.97 }).success).toBe(false)
+    expect(updateNgoProfileSchema.safeParse({ longitude: 77.59 }).success).toBe(false)
+    expect(updateNgoProfileSchema.safeParse({ latitude: 12.97, longitude: 77.59 }).success).toBe(true)
+  })
+})
+
+describe('donor profile validator', () => {
+  it('accepts a partial location-only update', () => {
+    const result = updateDonorProfileSchema.safeParse({ latitude: 12.9716, longitude: 77.5946 })
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.data.organizationName).toBeUndefined()
+  })
+
+  it('accepts a full profile update', () => {
+    expect(
+      updateDonorProfileSchema.safeParse({
+        organizationName: 'Spice House',
+        organizationType: 'Restaurant',
+        address: '12 MG Road',
+        city: 'Bengaluru',
+        state: 'Karnataka',
+        latitude: 12.93,
+        longitude: 77.62,
+        description: 'Fresh surplus daily.',
+      }).success,
+    ).toBe(true)
+  })
+
+  it('accepts null to clear the pin and rejects a half-set pin', () => {
+    expect(updateDonorProfileSchema.safeParse({ latitude: null, longitude: null }).success).toBe(true)
+    expect(updateDonorProfileSchema.safeParse({ latitude: 12.97 }).success).toBe(false)
+    expect(updateDonorProfileSchema.safeParse({ latitude: 91, longitude: 0 }).success).toBe(false)
+    expect(updateDonorProfileSchema.safeParse({ organizationName: '' }).success).toBe(false)
+  })
+})
+
+describe('volunteer profile validator', () => {
+  it('accepts a partial location-only update', () => {
+    const result = updateVolunteerProfileSchema.safeParse({ currentLatitude: 12.98, currentLongitude: 77.58 })
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.data.vehicleType).toBeUndefined()
+  })
+
+  it('accepts vehicle details and availability', () => {
+    expect(
+      updateVolunteerProfileSchema.safeParse({
+        vehicleType: 'Bike',
+        vehicleNumber: 'KA 01 AB 1234',
+        availability: 'AVAILABLE',
+      }).success,
+    ).toBe(true)
+    expect(updateVolunteerProfileSchema.safeParse({ availability: 'ON_FIRE' }).success).toBe(false)
+  })
+
+  it('accepts null to clear the pin and rejects a half-set pin', () => {
+    expect(updateVolunteerProfileSchema.safeParse({ currentLatitude: null, currentLongitude: null }).success).toBe(true)
+    expect(updateVolunteerProfileSchema.safeParse({ currentLatitude: 12.98 }).success).toBe(false)
+    expect(updateVolunteerProfileSchema.safeParse({ currentLatitude: 91, currentLongitude: 0 }).success).toBe(false)
+  })
+})
+
+describe('geo validator', () => {
+  it('coerces string coordinates from query params', () => {
+    const result = reverseGeocodeQuerySchema.safeParse({ lat: '12.97', lng: '77.59' })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.lat).toBe(12.97)
+      expect(result.data.lng).toBe(77.59)
+    }
+  })
+
+  it('rejects missing or out-of-range coordinates', () => {
+    expect(reverseGeocodeQuerySchema.safeParse({ lng: '77.59' }).success).toBe(false)
+    expect(reverseGeocodeQuerySchema.safeParse({ lat: '91', lng: '0' }).success).toBe(false)
+    expect(reverseGeocodeQuerySchema.safeParse({ lat: '0', lng: '-181' }).success).toBe(false)
   })
 })
 

@@ -1,9 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft, Lightbulb, Sparkles, UtensilsCrossed } from 'lucide-react'
-import { useState } from 'react'
+import { ArrowLeft, Lightbulb, Loader2, LocateFixed, MapPin, Sparkles, UtensilsCrossed } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom'
 import { z } from 'zod'
+
+import { useGeolocation } from '@/hooks/useGeolocation'
 
 import { api } from '@/api/client'
 import DashboardShell from '@/components/layout/DashboardShell'
@@ -28,6 +30,12 @@ const donationSchema = z
     expiryTime: z.string().min(1, 'Pickup expiry is required'),
     pickupTime: z.string().min(1, 'Pickup time is required'),
     pickupAddress: z.string().trim().min(1, 'Required').max(250),
+    latitude: z
+      .string()
+      .refine((v) => v.trim() === '' || (Number.isFinite(Number(v)) && Number(v) >= -90 && Number(v) <= 90), 'Latitude must be between -90 and 90'),
+    longitude: z
+      .string()
+      .refine((v) => v.trim() === '' || (Number.isFinite(Number(v)) && Number(v) >= -180 && Number(v) <= 180), 'Longitude must be between -180 and 180'),
     notes: z.string().trim().max(1000).optional(),
   })
   .refine((data) => data.expiryTime > data.pickupTime, {
@@ -37,6 +45,10 @@ const donationSchema = z
   .refine((data) => !data.preparedAt || data.expiryTime > data.preparedAt, {
     message: 'Expiry must be after the prepared time',
     path: ['expiryTime'],
+  })
+  .refine((data) => (data.latitude.trim() === '') === (data.longitude.trim() === ''), {
+    message: 'Set both latitude and longitude (or use “Use my location”).',
+    path: ['longitude'],
   })
 
 type DonationFormValues = z.infer<typeof donationSchema>
@@ -74,6 +86,8 @@ const defaultValues: DonationFormValues = {
   expiryTime: '',
   pickupTime: '',
   pickupAddress: '',
+  latitude: '',
+  longitude: '',
   notes: '',
 }
 
@@ -88,11 +102,21 @@ export default function NewDonationPage() {
     register,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<DonationFormValues>({
     resolver: zodResolver(donationSchema),
     defaultValues,
   })
+
+  const geo = useGeolocation()
+
+  // Drop the freshly-located pin into the form fields.
+  useEffect(() => {
+    if (!geo.coords) return
+    setValue('latitude', geo.coords.latitude.toFixed(6), { shouldDirty: true })
+    setValue('longitude', geo.coords.longitude.toFixed(6), { shouldDirty: true })
+  }, [geo.coords, setValue])
 
   const category = watch('category')
   const quantity = watch('quantity')
@@ -114,6 +138,9 @@ export default function NewDonationPage() {
       expiryTime: new Date(values.expiryTime).toISOString(),
       pickupTime: new Date(values.pickupTime).toISOString(),
       pickupAddress: values.pickupAddress,
+      ...(values.latitude.trim() !== '' && values.longitude.trim() !== ''
+        ? { latitude: Number(values.latitude), longitude: Number(values.longitude) }
+        : {}),
       description: values.notes || undefined,
       images: images
         .filter((img) => img.url)
@@ -227,6 +254,47 @@ export default function NewDonationPage() {
                   {...register('pickupAddress')}
                   error={errors.pickupAddress?.message}
                 />
+              </div>
+
+              <div className="sm:col-span-2 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="size-4 text-brand-600" />
+                    <p className="text-sm font-medium text-neutral-800">Pickup location</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={geo.locate}
+                    disabled={geo.loading || !geo.supported}
+                  >
+                    {geo.loading ? <Loader2 className="size-3.5 animate-spin" /> : <LocateFixed className="size-3.5" />}
+                    {geo.loading ? 'Locating…' : 'Use my location'}
+                  </Button>
+                </div>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Adding coordinates helps NGOs nearby find your listing instantly.
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <Input
+                    label="Latitude"
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 12.9716"
+                    {...register('latitude')}
+                    error={errors.latitude?.message}
+                  />
+                  <Input
+                    label="Longitude"
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 77.5946"
+                    {...register('longitude')}
+                    error={errors.longitude?.message}
+                  />
+                </div>
+                {geo.error && <p className="mt-2 text-xs leading-relaxed text-amber-600">{geo.error}</p>}
               </div>
 
               <div className="sm:col-span-2">

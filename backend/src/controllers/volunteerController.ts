@@ -3,7 +3,7 @@ import type { Request, Response } from 'express'
 import { prisma } from '../config/prisma.js'
 import { HttpError } from '../utils/HttpError.js'
 import { estimateMeals } from '../utils/meals.js'
-import type { UpdateAvailabilityBody } from '../validators/volunteer.js'
+import type { UpdateAvailabilityBody, UpdateVolunteerProfileBody } from '../validators/volunteer.js'
 
 /** Statuses that mean a delivery run is still in progress. */
 const ACTIVE_ASSIGNMENT_STATUSES = ['PENDING', 'ACCEPTED', 'IN_TRANSIT'] as const
@@ -194,6 +194,38 @@ export async function updateAvailability(req: Request, res: Response): Promise<v
   const updated = await prisma.volunteer.update({
     where: { id: volunteer.id },
     data: { availability },
+  })
+
+  res.json({ volunteer: updated })
+}
+
+/**
+ * PATCH /api/v1/volunteer/profile — updates the volunteer's own profile.
+ * Vehicle details plus the live location pin that rescue matching and the
+ * delivery drop-off use; sending `null` clears the pin.
+ */
+export async function updateProfile(req: Request, res: Response): Promise<void> {
+  const user = req.user!
+  const body = req.body as UpdateVolunteerProfileBody
+
+  const volunteer = await prisma.volunteer.findUnique({ where: { userId: user.userId } })
+  if (!volunteer) {
+    throw new HttpError(404, 'NOT_FOUND', 'Volunteer profile not found')
+  }
+
+  const updated = await prisma.volunteer.update({
+    where: { id: volunteer.id },
+    data: {
+      ...(body.vehicleType !== undefined && { vehicleType: body.vehicleType }),
+      ...(body.vehicleNumber !== undefined && { vehicleNumber: body.vehicleNumber }),
+      ...(body.availability !== undefined && { availability: body.availability }),
+      ...(body.currentLatitude !== undefined && { currentLatitude: body.currentLatitude }),
+      ...(body.currentLongitude !== undefined && { currentLongitude: body.currentLongitude }),
+    },
+  })
+
+  await prisma.auditLog.create({
+    data: { userId: user.userId, action: 'volunteer.profile.updated', entity: 'volunteer', entityId: volunteer.id },
   })
 
   res.json({ volunteer: updated })
