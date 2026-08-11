@@ -1,15 +1,37 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft, Bike, Eye, EyeOff, HandHeart, Store } from 'lucide-react'
-import { useState } from 'react'
+import { ArrowLeft, Bike, Eye, EyeOff, HandHeart, Loader2, MapPin, Store } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router-dom'
 
 import AuthLayout from '@/components/layout/AuthLayout'
-import { registerUser } from '@/api/auth'
+import RegisterMockup from '@/components/layout/RegisterMockup'
+import { useGeolocation } from '@/hooks/useGeolocation'
+import type { GeoCoords } from '@/hooks/useGeolocation'
+import { useReverseGeocode } from '@/hooks/useReverseGeocode'
+import { registerUser, type RegisterPayload } from '@/api/auth'
 import { registerFormSchema, type RegisterFormValues } from '@/schemas/register'
 import { supabase } from '@/services/supabase'
 import { roleDashboardPath } from '@/utils/auth'
+
+/**
+ * Holds the form values across the email-confirmation round trip. The
+ * confirmation link returns to /register, where the session is picked up and
+ * the platform user is created automatically — no re-typing.
+ */
+const PENDING_REGISTRATION_KEY = 'ecoserve.pendingRegistration'
+
+function buildPayload(values: RegisterFormValues): RegisterPayload {
+  return {
+    fullName: values.fullName,
+    role: values.role,
+    phone: values.phone || undefined,
+    ...(values.role === 'DONOR' ? { donor: values.donor } : {}),
+    ...(values.role === 'NGO' ? { ngo: values.ngo } : {}),
+    ...(values.role === 'VOLUNTEER' ? { volunteer: values.volunteer } : {}),
+  }
+}
 
 const inputClass =
   'w-full rounded-lg border border-neutral-300 bg-white px-3.5 py-2.5 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20'
@@ -47,6 +69,7 @@ export default function RegisterPage() {
     register,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<RegisterFormValues>({
     resolver: zodResolver(registerFormSchema),
@@ -55,6 +78,86 @@ export default function RegisterPage() {
   })
 
   const role = watch('role')
+
+  // Auto-fill the address (DONOR / NGO) from the user's current location.
+  const { coords, error: geoError, loading: locating, supported, locate } = useGeolocation()
+  const { loading: resolving, error: reverseError, lookup } = useReverseGeocode()
+  const autoFillRoles = useRef(new Set<string>())
+
+  const fillAddressFromCoords = useCallback(
+    async (c: GeoCoords) => {
+      if (role !== 'DONOR' && role !== 'NGO') return
+      const place = await lookup(c.latitude, c.longitude)
+      if (!place) return
+      if (role === 'DONOR') {
+        if (place.address) setValue('donor.address', place.address, { shouldDirty: true })
+        setValue('donor.city', place.city, { shouldDirty: true })
+        setValue('donor.state', place.state, { shouldDirty: true })
+      } else {
+        if (place.address) setValue('ngo.address', place.address, { shouldDirty: true })
+        setValue('ngo.city', place.city, { shouldDirty: true })
+        setValue('ngo.state', place.state, { shouldDirty: true })
+      }
+    },
+    [lookup, role, setValue],
+  )
+
+  // Request the location the first time an address-bearing section appears, so
+  // the address fills in automatically (the button below covers retries).
+  useEffect(() => {
+    if ((role === 'DONOR' || role === 'NGO') && supported && !autoFillRoles.current.has(role)) {
+      autoFillRoles.current.add(role)
+      locate()
+    }
+  }, [role, supported, locate])
+
+  useEffect(() => {
+    if (coords) void fillAddressFromCoords(coords)
+  }, [coords, fillAddressFromCoords])
+
+  /**
+   * Email-confirmation round trip: the user clicks the link from Supabase,
+   * returns to /register with a fresh session, and we finish creating their
+   * platform user + role profile automatically using the form they filled in.
+   */
+  useEffect(() => {
+    let active = true
+
+    const pending = localStorage.getItem(PENDING_REGISTRATION_KEY)
+    if (!pending) return
+
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!active || !data.session) return
+
+      const { email, payload } = JSON.parse(pending) as {
+        email: string
+        payload: RegisterPayload
+      }
+      // Only auto-complete when the confirmed account matches the signup email.
+      if (email.toLowerCase() !== (data.session.user.email ?? '').toLowerCase()) return
+
+      localStorage.removeItem(PENDING_REGISTRATION_KEY)
+      setSubmitting(true)
+      try {
+        await registerUser(payload)
+        if (active) navigate(roleDashboardPath[payload.role], { replace: true })
+      } catch (err) {
+        if (active) {
+          setSubmitting(false)
+          setError(
+            (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
+              'Registration failed',
+          )
+        }
+      }
+    })
+
+    return () => {
+      active = false
+    }
+    // Run once on mount — the confirmation link always lands here fresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const onSubmit = async (values: RegisterFormValues) => {
     setSubmitting(true)
@@ -69,6 +172,7 @@ export default function RegisterPage() {
       const { data, error: signUpError } = await supabase.auth.signUp({
         email: values.email,
         password: values.password,
+        options: { emailRedirectTo: `${window.location.origin}/register` },
       })
 
       if (signUpError) {
@@ -78,26 +182,24 @@ export default function RegisterPage() {
       }
 
       if (!data.session) {
+        // Email confirmation is on — remember the form so the confirmation link
+        // can finish registration automatically (see the mount effect above).
+        localStorage.setItem(
+          PENDING_REGISTRATION_KEY,
+          JSON.stringify({ email: values.email, payload: buildPayload(values) }),
+        )
         setSubmitting(false)
         setNotice(
-          `We sent a confirmation link to ${values.email}. Confirm it, then log in — we'll finish setting up your ${values.role.toLowerCase()} profile.`,
+          `We sent a confirmation link to ${values.email}. Click it and we'll finish setting up your ${values.role.toLowerCase()} profile automatically.`,
         )
         return
       }
     }
 
-    const payload = {
-      fullName: values.fullName,
-      role: values.role,
-      phone: values.phone || undefined,
-      ...(values.role === 'DONOR' ? { donor: values.donor } : {}),
-      ...(values.role === 'NGO' ? { ngo: values.ngo } : {}),
-      ...(values.role === 'VOLUNTEER' ? { volunteer: values.volunteer } : {}),
-    }
-
     // We have a session (fresh or existing) — create the platform user + profile.
     try {
-      await registerUser(payload)
+      await registerUser(buildPayload(values))
+      localStorage.removeItem(PENDING_REGISTRATION_KEY)
       setSubmitting(false)
       navigate(roleDashboardPath[values.role], { replace: true })
     } catch (err) {
@@ -112,6 +214,7 @@ export default function RegisterPage() {
     <AuthLayout
       title="Join Ecoserve"
       subtitle="Create your account as a donor, NGO, or volunteer"
+      panel={<RegisterMockup />}
     >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
         {/* Registering as */}
@@ -230,7 +333,12 @@ export default function RegisterPage() {
 
         {role === 'DONOR' && (
           <div className="space-y-4 rounded-xl bg-neutral-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Donor organization</p>
+            <LocationFillRow
+              title="Donor organization"
+              onClick={locate}
+              busy={locating || resolving}
+              error={geoError ?? reverseError}
+            />
             <Field label="Organization name" error={errors.donor?.organizationName?.message}>
               <input className={inputClass} placeholder="Green Kitchen" {...register('donor.organizationName')} />
             </Field>
@@ -253,7 +361,12 @@ export default function RegisterPage() {
 
         {role === 'NGO' && (
           <div className="space-y-4 rounded-xl bg-neutral-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">NGO details</p>
+            <LocationFillRow
+              title="NGO details"
+              onClick={locate}
+              busy={locating || resolving}
+              error={geoError ?? reverseError}
+            />
             <Field label="NGO name" error={errors.ngo?.ngoName?.message}>
               <input className={inputClass} placeholder="Food Bank Foundation" {...register('ngo.ngoName')} />
             </Field>
@@ -326,6 +439,36 @@ export default function RegisterPage() {
         Back to home
       </Link>
     </AuthLayout>
+  )
+}
+
+function LocationFillRow({
+  title,
+  onClick,
+  busy,
+  error,
+}: {
+  title: string
+  onClick: () => void
+  busy: boolean
+  error: string | null
+}) {
+  return (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">{title}</p>
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <MapPin className="size-3.5" />}
+          {busy ? 'Detecting location…' : 'Use my location'}
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </>
   )
 }
 

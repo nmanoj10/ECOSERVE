@@ -1,11 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Eye, EyeOff, Leaf, Loader2, Lock, LogIn, Mail } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff, Loader2, Lock, LogIn, Mail, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { z } from 'zod'
 
 import { fetchMe } from '@/api/auth'
+import AuthLayout from '@/components/layout/AuthLayout'
 import { supabase } from '@/services/supabase'
 import { roleDashboardPath } from '@/utils/auth'
 
@@ -22,7 +23,7 @@ const OAUTH_FROM_KEY = 'ecoserve.oauthFrom'
 
 const inputClass =
   'w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-11 pr-3.5 text-sm text-neutral-900 ' +
-  'placeholder:text-neutral-400 transition focus:border-[#0e5e23] focus:outline-none focus:ring-4 focus:ring-[#0e5e23]/10'
+  'placeholder:text-neutral-400 transition focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10'
 
 /** The multi-color Google "G" mark. */
 function GoogleIcon() {
@@ -75,7 +76,8 @@ export default function LoginPage() {
    * OAuth round trip: after Google redirects back here with a session, resolve
    * the platform user and continue to their dashboard. New accounts (no role
    * profile yet) finish registration on /register — the role there is bound to
-   * the Google account, so it is picked up automatically on later logins.
+   * the Google account, so it is picked up automatically on later logins. The
+   * same path also catches email-confirmation visits that land here.
    */
   useEffect(() => {
     let active = true
@@ -190,176 +192,168 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-[#f2f8ef]">
-      {/* ── Brand panel (desktop) ── */}
-      <aside className="relative hidden w-[55%] flex-col overflow-hidden lg:flex">
-        <Link to="/" className="z-10 inline-flex w-fit items-center gap-2.5 px-12 pt-10" aria-label="Ecoserve home">
-          <span className="flex size-9 items-center justify-center rounded-xl bg-[#0e5e23] text-white shadow-sm shadow-[#0e5e23]/30">
-            <Leaf className="size-5" />
-          </span>
-          <span className="text-xl font-extrabold tracking-tight text-[#0e5e23]">ECOSERVE</span>
-        </Link>
-
-        <div className="flex min-h-0 flex-1 items-center justify-center px-10 pb-6 pt-2">
-          <img
-            src="/login.webp"
-            alt="Ecoserve volunteers packing rescued produce into the delivery van"
-            draggable={false}
-            className="max-h-full w-auto max-w-full select-none object-contain"
-          />
-        </div>
-      </aside>
-
-      {/* ── Form panel ── */}
-      <main className="flex w-full flex-1 items-center justify-center px-4 py-10 sm:px-8">
-        <div className="w-full max-w-[440px]">
-          {/* Mobile logo */}
-          <div className="mb-8 flex justify-center lg:hidden">
-            <Link to="/" className="flex items-center gap-2.5" aria-label="Ecoserve home">
-              <span className="flex size-10 items-center justify-center rounded-xl bg-[#0e5e23] text-white shadow-sm shadow-[#0e5e23]/30">
-                <Leaf className="size-5" />
-              </span>
-              <span className="text-xl font-extrabold tracking-tight text-[#0e5e23]">ECOSERVE</span>
-            </Link>
+    <AuthLayout
+      title="Login to your account"
+      subtitle="Your role is detected automatically from your account."
+    >
+      <div className="rounded-2xl border border-neutral-200 bg-white/90 p-6 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_20px_40px_-24px_rgba(0,0,0,0.12)] backdrop-blur sm:p-7">
+        <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
+          {/* Email */}
+          <div>
+            <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-neutral-700">
+              Email Address
+            </label>
+            <div className="relative">
+              <Mail
+                className="pointer-events-none absolute left-3.5 top-1/2 size-4.5 -translate-y-1/2 text-neutral-400"
+                aria-hidden="true"
+              />
+              <input
+                id="email"
+                type="email"
+                autoComplete="email"
+                className={inputClass}
+                placeholder="Enter your email"
+                {...register('email')}
+              />
+            </div>
+            {errors.email && <p className="mt-1.5 text-xs text-red-600">{errors.email.message}</p>}
           </div>
 
-          <div className="rounded-3xl border border-neutral-100 bg-white px-7 py-9 shadow-[0_24px_60px_-24px_rgba(14,94,35,0.25)] sm:px-10">
-            {/* Card header */}
-            <div className="flex flex-col items-center text-center">
-              <span className="flex size-12 items-center justify-center rounded-2xl bg-[#0e5e23] text-white shadow-lg shadow-[#0e5e23]/25">
-                <Leaf className="size-6" />
-              </span>
-              <span className="mt-3 text-lg font-extrabold tracking-tight text-[#0e5e23]">ECOSERVE</span>
-              <h1 className="mt-2 text-2xl font-bold tracking-tight text-neutral-900">Login to your account</h1>
-              <p className="mt-1.5 text-sm text-neutral-500">Your role is detected automatically from your account.</p>
-            </div>
-
-            <form onSubmit={handleSubmit(onSubmit)} noValidate className="mt-8 space-y-5">
-              {/* Email */}
-              <div>
-                <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-neutral-700">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail
-                    className="pointer-events-none absolute left-3.5 top-1/2 size-4.5 -translate-y-1/2 text-neutral-400"
-                    aria-hidden="true"
-                  />
-                  <input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    className={inputClass}
-                    placeholder="Enter your email"
-                    {...register('email')}
-                  />
-                </div>
-                {errors.email && <p className="mt-1.5 text-xs text-red-600">{errors.email.message}</p>}
-              </div>
-
-              {/* Password */}
-              <div>
-                <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-neutral-700">
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock
-                    className="pointer-events-none absolute left-3.5 top-1/2 size-4.5 -translate-y-1/2 text-neutral-400"
-                    aria-hidden="true"
-                  />
-                  <input
-                    id="password"
-                    type={showPassword ? 'text' : 'password'}
-                    autoComplete="current-password"
-                    className={`${inputClass} pr-11`}
-                    placeholder="Enter your password"
-                    {...register('password')}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    onMouseDown={(e) => e.preventDefault()}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    className="absolute right-2 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-lg text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700"
-                  >
-                    {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
-                  </button>
-                </div>
-                {errors.password && <p className="mt-1.5 text-xs text-red-600">{errors.password.message}</p>}
-              </div>
-
-              {/* Remember me + Forgot password */}
-              <div className="flex items-center justify-between">
-                <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-neutral-600">
-                  <input
-                    type="checkbox"
-                    checked={remember}
-                    onChange={(e) => setRemember(e.target.checked)}
-                    className="size-4 rounded border-neutral-300 accent-[#0e5e23]"
-                  />
-                  Remember me
-                </label>
-                <button
-                  type="button"
-                  onClick={handleForgotPassword}
-                  className="text-sm font-semibold text-[#0e5e23] transition hover:text-[#0a4a1c] hover:underline"
-                >
-                  Forgot Password?
-                </button>
-              </div>
-
-              {error && (
-                <p role="alert" className="rounded-lg bg-red-50 px-3 py-2.5 text-xs text-red-700">
-                  {error}
-                </p>
-              )}
-              {notice && (
-                <p role="status" className="rounded-lg bg-[#e6f4ea] px-3 py-2.5 text-xs text-[#0e5e23]">
-                  {notice}
-                </p>
-              )}
-
+          {/* Password */}
+          <div>
+            <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-neutral-700">
+              Password
+            </label>
+            <div className="relative">
+              <Lock
+                className="pointer-events-none absolute left-3.5 top-1/2 size-4.5 -translate-y-1/2 text-neutral-400"
+                aria-hidden="true"
+              />
+              <input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                className={`${inputClass} pr-11`}
+                placeholder="Enter your password"
+                {...register('password')}
+              />
               <button
-                type="submit"
-                disabled={submitting}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0e5e23] px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-[#0e5e23]/30 transition hover:bg-[#0a4a1c] disabled:opacity-60"
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                onMouseDown={(e) => e.preventDefault()}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute right-2 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-lg text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-700"
               >
-                {submitting ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
-                {submitting ? 'Logging in…' : 'Login'}
+                {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
               </button>
-            </form>
-
-            {/* Divider */}
-            <div className="my-6 flex items-center gap-3" aria-hidden="true">
-              <span className="h-px flex-1 bg-neutral-200" />
-              <span className="text-xs font-medium text-neutral-400">or continue with</span>
-              <span className="h-px flex-1 bg-neutral-200" />
             </div>
+            {errors.password && <p className="mt-1.5 text-xs text-red-600">{errors.password.message}</p>}
+          </div>
 
-            {/* Google */}
+          {/* Remember me + Forgot password */}
+          <div className="flex items-center justify-between">
+            <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-neutral-600">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+                className="size-4 rounded border-neutral-300 accent-brand-600"
+              />
+              Remember me
+            </label>
             <button
               type="button"
-              onClick={handleGoogleLogin}
-              disabled={googleSubmitting}
-              className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-neutral-800 transition hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60"
+              onClick={handleForgotPassword}
+              className="text-sm font-semibold text-brand-700 transition hover:text-brand-800 hover:underline"
             >
-              {googleSubmitting ? <Loader2 className="size-4 animate-spin" /> : <GoogleIcon />}
-              Continue with Google
+              Forgot Password?
             </button>
-
-            {/* Footer */}
-            <p className="mt-7 text-center text-sm text-neutral-600">
-              Don't have an account?{' '}
-              <Link
-                to="/register"
-                className="font-semibold text-[#0e5e23] transition hover:text-[#0a4a1c] hover:underline"
-              >
-                Create Account
-              </Link>
-            </p>
           </div>
+
+          {error && (
+            <p role="alert" className="rounded-lg bg-red-50 px-3 py-2.5 text-xs text-red-700">
+              {error}
+            </p>
+          )}
+          {notice && (
+            <p role="status" className="rounded-lg bg-brand-50 px-3 py-2.5 text-xs text-brand-800">
+              {notice}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-brand-600/30 transition hover:bg-brand-700 disabled:opacity-60"
+          >
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
+            {submitting ? 'Logging in…' : 'Login'}
+          </button>
+        </form>
+
+        {/* Divider */}
+        <div className="my-6 flex items-center gap-3" aria-hidden="true">
+          <span className="h-px flex-1 bg-neutral-200" />
+          <span className="text-xs font-medium text-neutral-400">or continue with</span>
+          <span className="h-px flex-1 bg-neutral-200" />
         </div>
-      </main>
-    </div>
+
+        {/* Google */}
+        <button
+          type="button"
+          onClick={handleGoogleLogin}
+          disabled={googleSubmitting}
+          className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-neutral-800 transition hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60"
+        >
+          {googleSubmitting ? <Loader2 className="size-4 animate-spin" /> : <GoogleIcon />}
+          Continue with Google
+        </button>
+
+        {/* Security note */}
+        <p className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-neutral-400">
+          <ShieldCheck className="size-3.5 text-brand-500" aria-hidden="true" />
+          Protected with Supabase Auth — your data stays private
+        </p>
+
+        {/* Footer */}
+        <p className="mt-6 text-center text-sm text-neutral-600">
+          Don't have an account?{' '}
+          <Link to="/register" className="font-semibold text-brand-700 transition hover:text-brand-800 hover:underline">
+            Create Account
+          </Link>
+        </p>
+      </div>
+
+      {/* Social proof */}
+      <div className="mt-6 flex items-center justify-center gap-3">
+        <div className="flex -space-x-2">
+          {[
+            { initials: 'AH', color: 'bg-brand-500' },
+            { initials: 'SK', color: 'bg-emerald-500' },
+            { initials: 'MR', color: 'bg-teal-500' },
+            { initials: 'DP', color: 'bg-lime-600' },
+          ].map((avatar) => (
+            <span
+              key={avatar.initials}
+              className={`flex size-8 items-center justify-center rounded-full text-[10px] font-bold text-white ring-2 ring-white ${avatar.color}`}
+            >
+              {avatar.initials}
+            </span>
+          ))}
+        </div>
+        <p className="text-xs text-neutral-500">
+          Trusted by <span className="font-semibold text-neutral-800">480+ partner organizations</span>
+        </p>
+      </div>
+
+      <Link
+        to="/"
+        className="mt-4 flex items-center justify-center gap-1.5 text-sm text-neutral-500 transition hover:text-neutral-800"
+      >
+        <ArrowLeft className="size-3.5" />
+        Back to home
+      </Link>
+    </AuthLayout>
   )
 }

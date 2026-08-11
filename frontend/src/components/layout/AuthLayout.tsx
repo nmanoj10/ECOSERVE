@@ -1,19 +1,21 @@
 import type { ReactNode } from 'react'
-import { Leaf } from 'lucide-react'
+import { BadgeCheck, Leaf, Quote } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 interface AuthLayoutProps {
   title: string
   subtitle: string
   children: ReactNode
+  /** Optional custom brand-panel content (e.g. a product mockup). Defaults to the headline + testimonial. */
+  panel?: ReactNode
 }
 
 /** Two-column shell for the login/register pages: brand story + form. */
-export default function AuthLayout({ title, subtitle, children }: AuthLayoutProps) {
+export default function AuthLayout({ title, subtitle, children, panel }: AuthLayoutProps) {
   return (
     <div className="flex min-h-screen bg-white">
       {/* Brand panel */}
-      <aside className="relative hidden w-[44%] overflow-hidden bg-neutral-950 lg:block">
+      <aside className="relative hidden w-[44%] overflow-x-hidden overflow-y-auto bg-neutral-950 lg:block">
         <div className="absolute inset-0">
           <div className="absolute -left-24 top-1/4 h-96 w-96 rounded-full bg-brand-500/20 blur-3xl" />
           <div className="absolute -right-16 bottom-0 h-80 w-80 rounded-full bg-emerald-500/15 blur-3xl" />
@@ -28,15 +30,40 @@ export default function AuthLayout({ title, subtitle, children }: AuthLayoutProp
             <span className="text-lg font-semibold tracking-tight text-white">Ecoserve</span>
           </Link>
 
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-400">The food-rescue platform</p>
-            <h2 className="mt-4 max-w-sm text-3xl font-semibold leading-tight tracking-tight text-white">
-              Rescue food. Restore communities.
-            </h2>
-            <p className="mt-3 max-w-sm leading-relaxed text-neutral-400">
-              Connect surplus food with the people who need it — in minutes, not days.
-            </p>
-          </div>
+          {panel ? (
+            <div>{panel}</div>
+          ) : (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-400">The food-rescue platform</p>
+              <h2 className="mt-4 max-w-sm text-3xl font-semibold leading-tight tracking-tight text-white">
+                Rescue food. Restore communities.
+              </h2>
+              <p className="mt-3 max-w-sm leading-relaxed text-neutral-400">
+                Connect surplus food with the people who need it — in minutes, not days.
+              </p>
+
+              {/* Testimonial */}
+            <figure className="mt-10 max-w-sm rounded-2xl border border-white/10 bg-white/[0.04] p-5 backdrop-blur">
+              <Quote className="size-5 text-brand-400" aria-hidden="true" />
+              <blockquote className="mt-2.5 text-sm leading-relaxed text-neutral-300">
+                &ldquo;We posted 40 kg of bread and a volunteer picked it up within the hour. It used to take us all
+                day.&rdquo;
+              </blockquote>
+              <figcaption className="mt-4 flex items-center gap-3">
+                <span className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-emerald-500 text-xs font-bold text-white">
+                  PN
+                </span>
+                <div>
+                  <p className="flex items-center gap-1.5 text-sm font-semibold text-white">
+                    Priya N.
+                    <BadgeCheck className="size-4 text-brand-400" aria-label="Verified" />
+                  </p>
+                  <p className="text-xs text-neutral-500">Kitchen manager, Green Bites</p>
+                </div>
+              </figcaption>
+            </figure>
+            </div>
+          )}
 
           <div className="flex items-center gap-8">
             <div>
@@ -53,6 +80,15 @@ export default function AuthLayout({ title, subtitle, children }: AuthLayoutProp
               <p className="text-2xl font-semibold tracking-tight text-white">186 t</p>
               <p className="text-sm text-neutral-500">CO₂ saved</p>
             </div>
+          </div>
+
+          {/* Live network chip */}
+          <div className="absolute right-12 top-24 flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-3.5 py-2 text-xs text-neutral-300 backdrop-blur">
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
+            </span>
+            12 deliveries in progress right now
           </div>
         </div>
       </aside>
