@@ -1,0 +1,62 @@
+# Render blueprint — backend + AI service only.
+# The frontend deploys on Vercel (see frontend/vercel.json + docs/deployment.md).
+#
+# "Deploy → Blueprint" from the repo root, then set the `sync: false` secrets
+# in the Render dashboard (they are intentionally not in the repo).
+
+services:
+  # ── API + Socket.IO (Express/Prisma) ────────────────────────────────────
+  - type: web
+    name: ecoserve-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Behind Render's proxy — lets rate limiting read real client IPs.
+      - key: TRUST_PROXY
+        value: "true"
+      # Vercel frontend origin (replace with your actual Vercel domain). The
+      # same allowlist gates REST API AND Socket.IO CORS.
+      - key: CLIENT_URL
+        value: https://ecoserve.vercel.app
+      - key: CORS_ORIGINS
+        value: https://ecoserve.vercel.app
+      # Optional rate-limit tuning (per 15-minute window).
+      - key: API_RATE_LIMIT_MAX
+        value: "100"
+      - key: AUTH_RATE_LIMIT_MAX
+        value: "30"
+      # ── Secrets — set these in the Render dashboard (sync: false) ────────
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        sync: false
+      - key: IMAGEKIT_PUBLIC_KEY
+        sync: false
+      - key: IMAGEKIT_PRIVATE_KEY
+        sync: false
+      - key: IMAGEKIT_URL_ENDPOINT
+        sync: false
+      # Points at the ecoserve-ai service below (https://ecoserve-ai.onrender.com).
+      - key: AI_SERVICE_URL
+        sync: false
+
+  # ── Food-classifier (FastAPI/torch, CPU) ─────────────────────────────────
+  # No env vars required — the image ships the trained model and config.yaml.
+  - type: web
+    name: ecoserve-ai
+    runtime: docker
+    rootDir: ai-service
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
