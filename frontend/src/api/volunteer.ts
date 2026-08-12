@@ -156,6 +156,15 @@ export async function acceptDelivery(donationId: string): Promise<void> {
   await api.post('/v1/assignments', { donationId })
 }
 
+/**
+ * Phase 22, Step 61 — The volunteer picks up the food and begins transit.
+ * Delivery → IN_TRANSIT, donation → PICKED_UP, and the donor + NGO are
+ * notified; live GPS sharing starts once this lands.
+ */
+export async function startDelivery(deliveryId: string): Promise<void> {
+  await api.post(`/v1/deliveries/${deliveryId}/start`)
+}
+
 /** Phase 45 — a spot near the pickup where food can be handed out (OSM data). */
 export interface RescueSpot {
   name: string

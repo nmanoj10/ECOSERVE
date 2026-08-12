@@ -7,6 +7,7 @@ import {
   MapPin,
   Moon,
   Navigation,
+  PackageCheck,
   Soup,
   Star,
   Timer,
@@ -24,6 +25,7 @@ import {
   completeDelivery,
   fetchRescueSpots,
   fetchVolunteerDashboard,
+  startDelivery,
   updateVolunteerAvailability,
   type RescueSpotsResponse,
   type VolunteerAvailability,
@@ -122,6 +124,7 @@ export default function VolunteerDashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [completing, setCompleting] = useState(false)
+  const [starting, setStarting] = useState(false)
   const [analytics, setAnalytics] = useState<VolunteerAnalytics | null>(null)
   // Phase 45 — rescue & handout spots for an accepted rescue alert (?rescue=<donationId>)
   // or the current assignment's pickup.
@@ -194,6 +197,32 @@ export default function VolunteerDashboardPage() {
       })
     } finally {
       setSaving(false)
+    }
+  }
+
+  /** Phase 22, Step 61 — pick up the food and begin transit + live tracking. */
+  const handleStartPickup = async () => {
+    const deliveryId = assignment?.delivery?.id
+    if (!deliveryId || starting) return
+    setStarting(true)
+    try {
+      await startDelivery(deliveryId)
+      toast({
+        variant: 'success',
+        title: 'Pickup started',
+        description: 'You picked up the food — your live location is now shared with the donor and NGO.',
+      })
+      load({ silent: true })
+    } catch (err) {
+      toast({
+        variant: 'error',
+        title: 'Could not start pickup',
+        description:
+          (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
+          'Something went wrong — try again',
+      })
+    } finally {
+      setStarting(false)
     }
   }
 
@@ -277,7 +306,7 @@ export default function VolunteerDashboardPage() {
 
   // Phase 25, Step 66 — GPS tracking while in transit.
   const isTransit = assignment?.status === 'IN_TRANSIT'
-  const { isTracking, position } = useDeliveryTracking(assignment?.delivery?.id, isTransit)
+  const { isTracking, position, error: trackingError } = useDeliveryTracking(assignment?.delivery?.id, isTransit)
 
   // Phase 45 — the volunteer's saved location pin, used as the route origin so
   // the map shows the full journey: you → donor (pickup) → NGO (drop-off).
@@ -439,6 +468,18 @@ export default function VolunteerDashboardPage() {
                       })}
                     </div>
 
+                    {/* Phase 22, Step 61 — pick up the food; live GPS sharing starts here. */}
+                    {assignment?.delivery?.status === 'VOLUNTEER_ASSIGNED' && (
+                      <Button onClick={handleStartPickup} disabled={starting} className="w-full">
+                        {starting ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <PackageCheck className="size-4" />
+                        )}
+                        {starting ? 'Starting…' : 'Start pickup · begin live tracking'}
+                      </Button>
+                    )}
+
                     {/* Phase 29, Step 75 — finish the run once the food is handed over. */}
                     {isTransit && assignment?.delivery && (
                       <Button onClick={handleComplete} disabled={completing} className="w-full">
@@ -471,6 +512,12 @@ export default function VolunteerDashboardPage() {
                       <span className="relative inline-flex size-2 rounded-full bg-blue-500" />
                     </span>
                     Live tracking
+                  </span>
+                )}
+                {trackingError && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-700 ring-1 ring-red-200/50">
+                    <AlertTriangle className="size-3.5" />
+                    Location unavailable: {trackingError}
                   </span>
                 )}
               </CardHeader>

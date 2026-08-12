@@ -1,0 +1,15 @@
+# Keep the image lean — but NOT models/ (the trained weights must ship) and
+# NOT config.yaml / src / api (the app needs them).
+
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+tests
+temp
+test_image.jpg
+*.log
+.DS_Store
