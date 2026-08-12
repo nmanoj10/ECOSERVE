@@ -49,6 +49,29 @@ describe('findNearbyTransitPoints', () => {
     expect(points[1]!.type).toBe('homeless_shelter')
   })
 
+  it('exposes a street address built from OSM addr:* tags when present', async () => {
+    fetchMock.mockResolvedValue(
+      okResponse([
+        element({
+          tags: {
+            railway: 'station',
+            name: 'Central Station',
+            'addr:housenumber': '12',
+            'addr:street': 'MG Road',
+            'addr:city': 'Bengaluru',
+          },
+          lat: 12.971, lon: 77.591,
+        }),
+        element({ tags: { highway: 'bus_stop', name: 'Market Stop' }, lat: 12.972, lon: 77.592 }),
+      ]),
+    )
+
+    const points = await findNearbyTransitPoints(12.97, 77.59)
+
+    expect(points[0]!.address).toBe('12 MG Road, Bengaluru')
+    expect(points[1]!.address).toBeNull() // no addr tags → no address
+  })
+
   it('uses way/relation centroids when the element has no own coordinates', async () => {
     fetchMock.mockResolvedValue(
       okResponse([

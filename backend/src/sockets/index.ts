@@ -4,6 +4,7 @@ import { Server } from 'socket.io'
 import type { Socket } from 'socket.io'
 
 import { prisma } from '../config/prisma.js'
+import { maybeNotifyApproaching } from '../services/deliveryService.js'
 import { verifySupabaseToken } from '../config/supabase.js'
 import { allowedOrigins } from '../middleware/security.js'
 import { haversineKm } from '../utils/geo.js'
@@ -134,10 +135,28 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         return
       }
 
-      // Only the assigned volunteer may send GPS for this delivery.
+      // Only the assigned volunteer may send GPS for this delivery. The
+      // include also carries the full assignment shape needed by the shared
+      // approaching alert (donor + accepted NGO + volunteer name).
       const delivery = await prisma.delivery.findUnique({
         where: { id: deliveryId },
-        include: { assignment: { include: { volunteer: { select: { userId: true } } } } },
+        include: {
+          assignment: {
+            include: {
+              volunteer: { include: { user: { select: { fullName: true } } } },
+              donation: {
+                include: {
+                  donor: { select: { userId: true } },
+                  requests: {
+                    where: { status: 'ACCEPTED' },
+                    take: 1,
+                    include: { ngo: { select: { userId: true, ngoName: true, latitude: true, longitude: true } } },
+                  },
+                },
+              },
+            },
+          },
+        },
       })
       if (!delivery || delivery.assignment.volunteer.userId !== userId) {
         socket.emit('delivery:error', { message: 'Only the assigned volunteer can send GPS data' })
@@ -190,6 +209,11 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         heading: data.heading ?? null,
         timestamp: recordTimestamp.toISOString(),
       })
+
+      // Phase 29, Step 75 — the same once-only approaching alert the REST GPS
+      // endpoint fires, so the realtime channel behaves identically (this is
+      // the path the volunteer app actually uses).
+      await maybeNotifyApproaching(delivery, data.latitude, data.longitude)
     })
 
     socket.on('disconnect', () => {

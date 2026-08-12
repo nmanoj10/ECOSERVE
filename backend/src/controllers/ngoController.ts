@@ -9,6 +9,29 @@ import { estimateMeals } from '../utils/meals.js'
 import { nearbyDonationsQuerySchema } from '../validators/ngo.js'
 import type { CreateNgoRequestBody, UpdateNgoProfileBody } from '../validators/ngo.js'
 
+/** Radius (km) within which AVAILABLE volunteers are alerted when food is claimed. */
+const VOLUNTEER_RADIUS_KM = 30
+
+/**
+ * AVAILABLE volunteers whose live location pin is within `radiusKm` of the
+ * food. Volunteers without a pin are excluded — distance matching needs one.
+ */
+async function findNearbyAvailableVolunteers(lat: number, lng: number, radiusKm: number): Promise<string[]> {
+  const volunteers = await prisma.volunteer.findMany({
+    where: { availability: 'AVAILABLE' },
+    select: { userId: true, currentLatitude: true, currentLongitude: true },
+  })
+
+  return volunteers
+    .filter(
+      (volunteer) =>
+        volunteer.currentLatitude != null &&
+        volunteer.currentLongitude != null &&
+        haversineKm(lat, lng, volunteer.currentLatitude, volunteer.currentLongitude) <= radiusKm,
+    )
+    .map((volunteer) => volunteer.userId)
+}
+
 /**
  * Phase 18, Step 54 — GET /api/v1/donations/nearby (NGO only).
  * Returns AVAILABLE donations within `distance` km of the NGO's coordinates,
@@ -150,7 +173,9 @@ export async function createRequest(req: Request, res: Response): Promise<void> 
   const { donationId } = req.body as CreateNgoRequestBody
   const donation = await prisma.donation.findUnique({
     where: { id: donationId },
-    include: { donor: { select: { userId: true, organizationName: true } } },
+    include: {
+      donor: { select: { userId: true, organizationName: true, latitude: true, longitude: true } },
+    },
   })
   if (!donation) {
     throw new HttpError(404, 'NOT_FOUND', 'Donation not found')
@@ -195,6 +220,29 @@ export async function createRequest(req: Request, res: Response): Promise<void> 
     type: NOTIFICATION_TYPES.DONATION_ACCEPTED,
     donationId: donation.id,
   })
+
+  // "Volunteers needed" in-app notification to AVAILABLE volunteers within
+  // 30 km the moment food is claimed, so someone can offer pickup/delivery
+  // help right away. Skipped when neither the donation nor the donor has
+  // coordinates (distance matching is impossible).
+  const dLat = donation.latitude ?? donation.donor.latitude
+  const dLng = donation.longitude ?? donation.donor.longitude
+  if (dLat != null && dLng != null) {
+    const volunteerIds = await findNearbyAvailableVolunteers(dLat, dLng, VOLUNTEER_RADIUS_KM)
+    if (volunteerIds.length > 0) {
+      const pickup = donation.pickupTime
+        ? ` Pickup at ${String(donation.pickupTime.getHours()).padStart(2, '0')}:${String(donation.pickupTime.getMinutes()).padStart(2, '0')}.`
+        : ''
+      await notifyUsers(volunteerIds, {
+        title: `Volunteers needed: ${donation.foodName}`,
+        message:
+          `${donation.foodName} (${donation.quantity} ${donation.unit}) from ${donation.donor.organizationName} ` +
+          `was accepted by ${ngo.ngoName}. Pickup: ${donation.pickupAddress}.${pickup} Offer to help with the delivery.`,
+        type: NOTIFICATION_TYPES.VOLUNTEER_NEEDED,
+        donationId: donation.id,
+      })
+    }
+  }
 
   res.status(201).json({ request })
 }

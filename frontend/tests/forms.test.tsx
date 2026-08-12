@@ -15,7 +15,7 @@ import RegisterPage from '@/pages/auth/RegisterPage'
 import NewDonationPage from '@/pages/donor/NewDonationPage'
 import DonorProfilePage from '@/pages/donor/ProfilePage'
 import { ToastProvider } from '@/components/ui/Toast'
-import { fetchMe, registerUser } from '@/api/auth'
+import { createConfirmedAuthUser, fetchMe, registerUser } from '@/api/auth'
 import { api } from '@/api/client'
 
 // ── Module mocks (Supabase session, API layer, auth hook) ───────────────────
@@ -48,6 +48,7 @@ vi.mock('@/api/auth', () => ({
   revokeSession: vi.fn(),
   savePendingRegistration: vi.fn(),
   getPendingRegistration: vi.fn(),
+  createConfirmedAuthUser: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -84,6 +85,7 @@ vi.mock('@/components/maps/LocationPinMap', () => ({
 
 const mockedFetchMe = vi.mocked(fetchMe)
 const mockedRegisterUser = vi.mocked(registerUser)
+const mockedCreateConfirmedAuthUser = vi.mocked(createConfirmedAuthUser)
 const mockedApi = vi.mocked(api)
 
 beforeEach(() => {
@@ -296,10 +298,41 @@ describe('RegisterPage', () => {
     await user.click(screen.getByRole('button', { name: /create account/i }))
 
     expect(await screen.findByText('Passwords do not match')).toBeInTheDocument()
-    expect(supabaseMock.auth.signUp).not.toHaveBeenCalled()
+    expect(mockedCreateConfirmedAuthUser).not.toHaveBeenCalled()
   })
 
-  it('shows the confirmation notice and skips registration when signup needs email confirmation', async () => {
+  it('auto-confirms via the backend, signs in, and lands on the role dashboard', async () => {
+    // The backend creates the account pre-confirmed (no email is sent), then
+    // the page signs in with the password and finishes registration.
+    mockedCreateConfirmedAuthUser.mockResolvedValue({ ok: true } as never)
+    mockedRegisterUser.mockResolvedValue({ user: { role: 'VOLUNTEER' } } as never)
+    const user = userEvent.setup()
+    renderRegister()
+
+    await user.click(screen.getByText('Volunteer'))
+    await user.type(screen.getByLabelText('Full name'), 'Ravi Kumar')
+    await user.type(screen.getByLabelText('Email'), 'ravi@example.com')
+    await user.type(screen.getByLabelText('Password'), 'password123')
+    await user.type(screen.getByLabelText('Confirm password'), 'password123')
+    await user.click(screen.getByRole('button', { name: /create account/i }))
+
+    expect(await screen.findByText('Volunteer dashboard probe')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockedCreateConfirmedAuthUser).toHaveBeenCalledWith('ravi@example.com', 'password123')
+      expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalledWith({
+        email: 'ravi@example.com',
+        password: 'password123',
+      })
+      expect(mockedRegisterUser).toHaveBeenCalledWith(
+        expect.objectContaining({ role: 'VOLUNTEER', fullName: 'Ravi Kumar' }),
+      )
+    })
+  })
+
+  it('shows an error when the backend auto-confirm also fails', async () => {
+    mockedCreateConfirmedAuthUser.mockRejectedValue({
+      response: { data: { error: { message: 'Could not create account' } } },
+    })
     const user = userEvent.setup()
     renderRegister()
 
@@ -310,15 +343,12 @@ describe('RegisterPage', () => {
     await user.type(screen.getByLabelText('Confirm password'), 'password123')
     await user.click(screen.getByRole('button', { name: /create account/i }))
 
-    expect(await screen.findByRole('status')).toHaveTextContent(/confirmation link/)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not create account')
     expect(mockedRegisterUser).not.toHaveBeenCalled()
   })
 
   it('registers the platform user and lands on the role dashboard', async () => {
-    supabaseMock.auth.signUp.mockResolvedValue({
-      data: { session: { access_token: 'token' } },
-      error: null,
-    } as never)
+    mockedCreateConfirmedAuthUser.mockResolvedValue({ ok: true } as never)
     mockedRegisterUser.mockResolvedValue({ user: { role: 'VOLUNTEER' } } as never)
     const user = userEvent.setup()
     renderRegister()
@@ -339,10 +369,7 @@ describe('RegisterPage', () => {
   })
 
   it('displays a registration API error', async () => {
-    supabaseMock.auth.signUp.mockResolvedValue({
-      data: { session: { access_token: 'token' } },
-      error: null,
-    } as never)
+    mockedCreateConfirmedAuthUser.mockResolvedValue({ ok: true } as never)
     mockedRegisterUser.mockRejectedValue({
       response: { data: { error: { message: 'Email already registered' } } },
     })

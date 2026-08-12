@@ -18,6 +18,8 @@ export interface TransitPoint {
   type: 'railway_station' | 'bus_stand' | 'homeless_shelter' | 'worship' | 'community_centre'
   /** Human-readable category label used in notification text. */
   label: string
+  /** Best-effort street/city address from the OSM element's addr:* tags, e.g. "12, MG Road, Bengaluru". */
+  address: string | null
   latitude: number
   longitude: number
   distanceKm: number
@@ -52,6 +54,22 @@ function classify(element: OverpassElement): TransitPoint['type'] | null {
   if (tags['amenity'] === 'place_of_worship') return 'worship'
   if (tags['amenity'] === 'community_centre') return 'community_centre'
   return null
+}
+
+/**
+ * Builds a best-effort street address from the element's OSM `addr:*` tags.
+ * Bus stops and shelters rarely carry a full address, so this is advisory —
+ * `null` when nothing usable is tagged.
+ */
+function pointAddress(tags: Record<string, string>): string | null {
+  const street = tags['addr:street'] ?? tags['addr:place'] ?? tags['addr:road']
+  const number = tags['addr:housenumber']
+  const city =
+    tags['addr:city'] ?? tags['addr:town'] ?? tags['addr:village'] ?? tags['addr:suburb'] ?? tags['addr:district']
+
+  const streetPart = number && street ? `${number} ${street}` : (street ?? null)
+  const parts = [streetPart, city ?? null].filter((part): part is string => Boolean(part?.trim()))
+  return parts.length > 0 ? parts.join(', ') : null
 }
 
 /**
@@ -123,11 +141,13 @@ export async function findNearbyTransitPoints(
       const pointLng = el.lon ?? el.center?.lon
       const type = classify(el)
       if (pointLat == null || pointLng == null || !type) return null
+      const tags = el.tags ?? {}
 
       return {
-        name: el.tags?.['name'] ?? TYPE_LABELS[type],
+        name: tags['name'] ?? TYPE_LABELS[type],
         type,
         label: TYPE_LABELS[type],
+        address: pointAddress(tags),
         latitude: pointLat,
         longitude: pointLng,
         distanceKm: Math.round(haversineKm(lat, lng, pointLat, pointLng) * 100) / 100,

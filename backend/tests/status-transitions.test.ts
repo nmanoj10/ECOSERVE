@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { canTransitionDelivery, type DeliveryStatus } from '../src/validators/statuses.js'
 import { completeDelivery, startDelivery, submitLocation } from '../src/controllers/deliveryController.js'
 import { notifyUsers } from '../src/services/notificationService.js'
-import { emitToUser } from '../src/services/realtime.js'
+import { emitToDeliveryRoom, emitToUser } from '../src/services/realtime.js'
 
 const prismaMock = vi.hoisted(() => ({
   delivery: { findUnique: vi.fn(), updateMany: vi.fn() },
@@ -36,12 +36,14 @@ vi.mock('../src/services/notificationService.js', () => ({
 
 vi.mock('../src/services/realtime.js', () => ({
   emitToUser: vi.fn(),
+  emitToDeliveryRoom: vi.fn(),
 }))
 
 // The hoisted mock doubles as the assertion handle (keeps full vi.fn() types).
 const mockedPrisma = prismaMock
 const mockedNotify = vi.mocked(notifyUsers)
 const mockedEmit = vi.mocked(emitToUser)
+const mockedEmitRoom = vi.mocked(emitToDeliveryRoom)
 
 describe('canTransitionDelivery — state machine matrix', () => {
   const FLOW: DeliveryStatus[] = ['PENDING', 'AVAILABLE', 'ACCEPTED', 'VOLUNTEER_ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED']
@@ -200,17 +202,31 @@ describe('startDelivery', () => {
     )
   })
 
-  it('notifies the donor and NGO about pickup and transit', async () => {
+  it('notifies the donor, NGO and volunteer about pickup and transit', async () => {
     mockedPrisma.delivery.findUnique.mockResolvedValue(deliveryFixture() as never)
 
     await startDelivery(makeReq() as never, makeRes() as never)
 
-    expect(mockedNotify).toHaveBeenCalledTimes(2)
-    for (const call of mockedNotify.mock.calls) {
-      expect(call[0]).toEqual(['donor1', 'ngo1'])
-    }
+    // donor+NGO pickup, donor+NGO transit, volunteer pickup, volunteer transit.
+    expect(mockedNotify).toHaveBeenCalledTimes(4)
+    expect(mockedNotify.mock.calls[0]![0]).toEqual(['donor1', 'ngo1'])
+    expect(mockedNotify.mock.calls[1]![0]).toEqual(['donor1', 'ngo1'])
+    expect(mockedNotify.mock.calls[2]![0]).toEqual(['v1'])
+    expect(mockedNotify.mock.calls[3]![0]).toEqual(['v1'])
     expect(mockedNotify.mock.calls[0]![1].title).toContain('Pickup started')
     expect(mockedNotify.mock.calls[1]![1].title).toContain('In transit')
+    expect(mockedNotify.mock.calls[2]![1].message).toContain('You picked up')
+    expect(mockedNotify.mock.calls[3]![1].message).toContain('Drive safe')
+  })
+
+  it('broadcasts delivery:status IN_TRANSIT to the delivery room', async () => {
+    mockedPrisma.delivery.findUnique.mockResolvedValue(deliveryFixture() as never)
+
+    await startDelivery(makeReq() as never, makeRes() as never)
+
+    expect(mockedEmitRoom).toHaveBeenCalledWith('d1', 'delivery:status',
+      expect.objectContaining({ deliveryId: 'd1', status: 'IN_TRANSIT', startedAt: expect.any(String) }),
+    )
   })
 
   it('guards against a concurrent double-start (atomic updateMany count check)', async () => {
@@ -355,7 +371,7 @@ describe('completeDelivery', () => {
     expect(mockedNotify).not.toHaveBeenCalled()
   })
 
-  it('notifies donor and NGO that the delivery is complete', async () => {
+  it('notifies donor, NGO and the volunteer that the delivery is complete', async () => {
     mockedPrisma.delivery.findUnique.mockResolvedValue(deliveryFixture() as never)
     mockedPrisma.$transaction.mockImplementation((cb: (t: never) => Promise<unknown>) =>
       cb({
@@ -369,9 +385,30 @@ describe('completeDelivery', () => {
 
     await completeDelivery(makeReq() as never, makeRes() as never)
 
-    expect(mockedNotify).toHaveBeenCalledTimes(1)
+    expect(mockedNotify).toHaveBeenCalledTimes(2)
     expect(mockedNotify.mock.calls[0]![0]).toEqual(['donor1', 'ngo1'])
     expect(mockedNotify.mock.calls[0]![1].title).toContain('Delivery completed')
+    expect(mockedNotify.mock.calls[1]![0]).toEqual(['v1'])
+    expect(mockedNotify.mock.calls[1]![1].message).toContain('You delivered')
+  })
+
+  it('broadcasts delivery:status DELIVERED to the delivery room', async () => {
+    mockedPrisma.delivery.findUnique.mockResolvedValue(deliveryFixture() as never)
+    mockedPrisma.$transaction.mockImplementation((cb: (t: never) => Promise<unknown>) =>
+      cb({
+        delivery: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        donation: { update: vi.fn() },
+        volunteerAssignment: { update: vi.fn() },
+        volunteer: { update: vi.fn() },
+        auditLog: { create: vi.fn() },
+      } as never),
+    )
+
+    await completeDelivery(makeReq() as never, makeRes() as never)
+
+    expect(mockedEmitRoom).toHaveBeenCalledWith('d1', 'delivery:status',
+      expect.objectContaining({ deliveryId: 'd1', status: 'DELIVERED', completedAt: expect.any(String) }),
+    )
   })
 })
 
@@ -475,6 +512,9 @@ describe('submitLocation', () => {
     expect(mockedNotify).toHaveBeenCalledTimes(1)
     expect(mockedNotify.mock.calls[0]![0]).toEqual(['donor1', 'ngo1'])
     expect(mockedNotify.mock.calls[0]![1].title).toContain('almost there')
+    expect(mockedEmitRoom).toHaveBeenCalledWith('d1', 'delivery:approaching',
+      expect.objectContaining({ deliveryId: 'd1', ngoName: 'Hope NGO' }),
+    )
   })
 
   it('does not alert while the volunteer is still far from the drop point', async () => {
@@ -482,6 +522,7 @@ describe('submitLocation', () => {
 
     expect(mockedPrisma.delivery.updateMany).not.toHaveBeenCalled()
     expect(mockedNotify).not.toHaveBeenCalled()
+    expect(mockedEmitRoom).not.toHaveBeenCalled()
   })
 
   it('does not re-alert when the delivery was already flagged (once-guarantee)', async () => {

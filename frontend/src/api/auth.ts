@@ -50,6 +50,18 @@ export async function registerUser(payload: RegisterPayload): Promise<RegisterRe
 }
 
 /**
+ * Creates a Supabase auth user that is already email-confirmed via the backend
+ * (`POST /v1/auth/signup` — no confirmation email is sent). Used when the
+ * standard `signUp` doesn't hand back a session: the project still has
+ * "Confirm email" enabled or the free-plan email quota is exhausted. The
+ * caller signs in with the password right after, so signup is instant.
+ */
+export async function createConfirmedAuthUser(email: string, password: string): Promise<{ ok: boolean }> {
+  const { data } = await api.post<{ ok: boolean }>('/v1/auth/signup', { email, password })
+  return data
+}
+
+/**
  * Saves the registration form server-side before email confirmation, so the
  * confirmation-link landing can complete the profile even when the link is
  * opened in a different browser or device (where localStorage is empty).

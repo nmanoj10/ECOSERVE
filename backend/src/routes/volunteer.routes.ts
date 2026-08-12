@@ -1,6 +1,6 @@
 import { Router } from 'express'
 
-import { dashboardStats, updateAvailability, updateProfile } from '../controllers/volunteerController.js'
+import { dashboardStats, rescueSpots, updateAvailability, updateProfile } from '../controllers/volunteerController.js'
 import { authRequired } from '../middleware/auth.js'
 import { authorize } from '../middleware/authorize.js'
 import { validate } from '../middleware/validate.js'
@@ -12,5 +12,7 @@ export const volunteerRoutes = Router()
 volunteerRoutes.use(authRequired, authorize('VOLUNTEER'))
 
 volunteerRoutes.get('/dashboard', dashboardStats)
+// Phase 45 — donor pickup location + nearby railway stations / bus stands / homeless spots.
+volunteerRoutes.get('/rescue-spots', rescueSpots)
 volunteerRoutes.patch('/availability', validate(updateAvailabilitySchema), updateAvailability)
 volunteerRoutes.patch('/profile', validate(updateVolunteerProfileSchema), updateProfile)

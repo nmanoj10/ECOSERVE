@@ -1,7 +1,7 @@
 import { prisma } from '../config/prisma.js'
 import { haversineKm } from '../utils/geo.js'
 import { notifyUsers, NOTIFICATION_TYPES } from './notificationService.js'
-import { findNearbyTransitPoints } from './transitService.js'
+import { findNearbyTransitPoints, type TransitPoint } from './transitService.js'
 
 export interface RescueSummary {
   /** Donations in the rescue window that were scanned. */
@@ -108,10 +108,15 @@ export async function runRescueCheck(): Promise<RescueSummary> {
 
   for (const { donation, dLat, dLng, hoursLeft, recipients } of actionable) {
     const transit = transitByDonation.get(donation.id) ?? []
+    // Phase 45 — each spot now carries its street address (when OSM has one).
+    // The top 3 keep addresses so the alert stays scannable.
+    const spotText = (t: TransitPoint) =>
+      `${t.name} (${t.label}, ${t.distanceKm} km${t.address ? `, ${t.address}` : ''})`
     const spots =
       dLat != null && dLng != null
         ? transit.length
-          ? transit.map((t) => `${t.name} (${t.label}, ${t.distanceKm} km)`).join(', ')
+          ? transit.slice(0, 3).map(spotText).join(', ') +
+            (transit.length > 3 ? `, and ${transit.length - 3} more spots` : '')
           : `near the donation (${dLat.toFixed(4)}, ${dLng.toFixed(4)})`
         : null
     const mapsLink = dLat != null && dLng != null ? `https://maps.google.com/?q=${dLat.toFixed(5)},${dLng.toFixed(5)}` : null
@@ -125,7 +130,8 @@ export async function runRescueCheck(): Promise<RescueSummary> {
         `no NGO claimed it. Please arrange pickup or delivery directly.`
     const rescuerMessage =
       `${donation.foodName} (${donation.quantity} ${donation.unit}) from ${donation.donor.organizationName} ` +
-      `expires in ~${hoursLeft}h and no NGO claimed it. Rescue at: ${spots}. Location: ${mapsLink}`
+      `expires in ~${hoursLeft}h and no NGO claimed it. Rescue at: ${spots}. ` +
+      `Location: ${mapsLink}. Tap “Accept rescue” for the map and directions.`
 
     // Phase 29, Step 75 — persist via the shared notification service. Owner
     // and volunteers get different copy, so two calls. All rows + the

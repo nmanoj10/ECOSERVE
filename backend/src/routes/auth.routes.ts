@@ -1,6 +1,7 @@
 import { Router } from 'express'
 
 import {
+  createInstantSignup,
   getPendingRegistration,
   listSessions,
   logout,
@@ -15,11 +16,20 @@ import { authRequired, verifyToken } from '../middleware/auth.js'
 import { authLimiter } from '../middleware/rateLimiter.js'
 import { validate } from '../middleware/validate.js'
 import { logoutSchema, refreshSchema, sessionSchema } from '../validators/auth.js'
-import { pendingRegistrationSchema, registerSchema } from '../validators/register.js'
+import { pendingRegistrationSchema, registerSchema, signupSchema } from '../validators/register.js'
 
 export const authRoutes = Router()
 
 authRoutes.use(authLimiter)
+
+// Instant demo signup — creates a pre-confirmed auth user via the Admin API
+// (no confirmation email, no email rate limit), so the client can sign in
+// immediately and finish registration. Public (no session yet) but rate-limited.
+//
+// ⚠️ DEMO-ONLY: anyone can create an email-confirmed account for ANY address
+// with a caller-chosen password. Do NOT ship this endpoint to production
+// without email verification (see docs/security.md).
+authRoutes.post('/signup', validate(signupSchema), createInstantSignup)
 
 // Protected by a valid Supabase token (the token IS the proof of identity).
 authRoutes.post('/register', verifyToken, validate(registerSchema), register)

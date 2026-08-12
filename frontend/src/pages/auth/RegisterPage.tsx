@@ -11,9 +11,9 @@ import { useGeolocation } from '@/hooks/useGeolocation'
 import type { GeoCoords } from '@/hooks/useGeolocation'
 import { useReverseGeocode } from '@/hooks/useReverseGeocode'
 import {
+  createConfirmedAuthUser,
   getPendingRegistration,
   registerUser,
-  savePendingRegistration,
   type RegisterPayload,
 } from '@/api/auth'
 import { registerFormSchema, type RegisterFormValues } from '@/schemas/register'
@@ -65,7 +65,6 @@ const roles = [
 export default function RegisterPage() {
   const navigate = useNavigate()
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
@@ -207,38 +206,34 @@ export default function RegisterPage() {
   const onSubmit = async (values: RegisterFormValues) => {
     setSubmitting(true)
     setError(null)
-    setNotice(null)
 
-    // If the user already has a session (e.g. they confirmed their email and were
-    // redirected here from login), skip signUp and finish registration directly.
+    // If the user already has a session (e.g. they were redirected here from
+    // login), skip signUp and finish registration directly.
     const { data: sessionData } = await supabase.auth.getSession()
 
     if (!sessionData.session) {
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: values.email,
-        password: values.password,
-        options: { emailRedirectTo: `${window.location.origin}/register` },
-      })
-
-      if (signUpError) {
+      // Create the account pre-confirmed via the backend Admin API. No email is
+      // ever sent, so signup is instant and the free-plan email quota is never
+      // touched — this works whether or not Supabase's "Confirm email" toggle
+      // is on. Then sign in with the password directly; no confirmation step.
+      try {
+        await createConfirmedAuthUser(values.email, values.password)
+      } catch (err) {
         setSubmitting(false)
-        setError(signUpError.message)
+        setError(
+          (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
+            'Could not create account',
+        )
         return
       }
 
-      if (!data.session) {
-        // Email confirmation is on — remember the form so the confirmation link
-        // can finish registration automatically (see the mount effect above).
-        // The server copy covers the case where the link is opened in a
-        // different browser or device (localStorage wouldn't be there); it's
-        // best-effort, so don't block the confirmation notice on it.
-        const payload = buildPayload(values)
-        localStorage.setItem(PENDING_REGISTRATION_KEY, JSON.stringify({ email: values.email, payload }))
-        void savePendingRegistration(values.email, payload)
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: values.email,
+        password: values.password,
+      })
+      if (signInError) {
         setSubmitting(false)
-        setNotice(
-          `We sent a confirmation link to ${values.email}. Click it and we'll finish setting up your ${values.role.toLowerCase()} profile automatically.`,
-        )
+        setError(signInError.message)
         return
       }
     }
@@ -454,11 +449,6 @@ export default function RegisterPage() {
         {error && (
           <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
             {error}
-          </p>
-        )}
-        {notice && (
-          <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-800" role="status">
-            {notice}
           </p>
         )}
 

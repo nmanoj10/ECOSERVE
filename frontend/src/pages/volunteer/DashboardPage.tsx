@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Bike,
   CheckCircle2,
   Clock,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import { fetchVolunteerAnalytics, type VolunteerAnalytics } from '@/api/analytics'
@@ -20,11 +22,14 @@ import { fetchMe } from '@/api/auth'
 import { useDeliveryTracking } from '@/hooks/useDeliveryTracking'
 import {
   completeDelivery,
+  fetchRescueSpots,
   fetchVolunteerDashboard,
   updateVolunteerAvailability,
+  type RescueSpotsResponse,
   type VolunteerAvailability,
   type VolunteerDashboard,
 } from '@/api/volunteer'
+import RescueSpotsPanel, { RescueSpotsPanelSkeleton } from '@/components/rescue/RescueSpotsPanel'
 import { CountUp } from '@/components/home/CountUp'
 import DashboardShell from '@/components/layout/DashboardShell'
 import NotificationsCard from '@/components/notifications/NotificationsCard'
@@ -118,6 +123,13 @@ export default function VolunteerDashboardPage() {
   const [saving, setSaving] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [analytics, setAnalytics] = useState<VolunteerAnalytics | null>(null)
+  // Phase 45 — rescue & handout spots for an accepted rescue alert (?rescue=<donationId>)
+  // or the current assignment's pickup.
+  const [rescue, setRescue] = useState<RescueSpotsResponse | null>(null)
+  const [rescueLoading, setRescueLoading] = useState(false)
+  const [rescueError, setRescueError] = useState<string | null>(null)
+  const [searchParams] = useSearchParams()
+  const rescueDonationId = searchParams.get('rescue')
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) {
@@ -219,9 +231,61 @@ export default function VolunteerDashboardPage() {
     ? new Date(assignment.delivery.eta).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null
 
+  // Phase 45 — rescue map: an accepted rescue alert (?rescue=<donationId>)
+  // takes priority; otherwise fall back to the current assignment's pickup.
+  useEffect(() => {
+    let active = true
+
+    const fetchSpots = async (donationId?: string) => {
+      setRescueLoading(true)
+      setRescueError(null)
+      try {
+        const data = await fetchRescueSpots(donationId)
+        if (active) setRescue(data)
+      } catch (err) {
+        // The donation may have been claimed while the alert sat in the inbox.
+        if (active) {
+          setRescue(null)
+          setRescueError(
+            (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
+              'Could not load the rescue map',
+          )
+        }
+      } finally {
+        if (active) setRescueLoading(false)
+      }
+    }
+
+    if (rescueDonationId) {
+      void fetchSpots(rescueDonationId)
+      return () => {
+        active = false
+      }
+    }
+
+    if (!assignment?.donation.id || !assignment.pickup) {
+      setRescue(null)
+      setRescueError(null)
+      return
+    }
+    void fetchSpots()
+
+    return () => {
+      active = false
+    }
+  }, [rescueDonationId, assignment?.donation.id, assignment?.pickup?.latitude, assignment?.pickup?.longitude])
+
   // Phase 25, Step 66 — GPS tracking while in transit.
   const isTransit = assignment?.status === 'IN_TRANSIT'
   const { isTracking, position } = useDeliveryTracking(assignment?.delivery?.id, isTransit)
+
+  // Phase 45 — the volunteer's saved location pin, used as the route origin so
+  // the map shows the full journey: you → donor (pickup) → NGO (drop-off).
+  // Only used before the pickup: once in transit the live GPS marker takes over.
+  const volunteerPin =
+    !isTransit && profile?.volunteer?.currentLatitude != null && profile?.volunteer?.currentLongitude != null
+      ? { latitude: profile.volunteer.currentLatitude, longitude: profile.volunteer.currentLongitude }
+      : null
 
   // Step 79 — completed runs per month for the impact chart.
   const monthlyDeliveries = (analytics?.byMonth ?? []).map((point) => ({
@@ -310,11 +374,19 @@ export default function VolunteerDashboardPage() {
                     <Skeleton className="h-4 w-3/4" />
                   </div>
                 ) : !assignment ? (
-                  <EmptyState
-                    icon={Truck}
-                    title="No active delivery"
-                    description="Set yourself as Available and you'll be matched with the next pickup — including rescue alerts for food about to expire."
-                  />
+                  rescueDonationId ? (
+                    <EmptyState
+                      icon={Truck}
+                      title="Rescue mission accepted"
+                      description="The donor pickup and handout spots are below — take the food and hand it out at the nearest railway station, bus stand or shelter."
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={Truck}
+                      title="No active delivery"
+                      description="Set yourself as Available and you'll be matched with the next pickup — including rescue alerts for food about to expire."
+                    />
+                  )
                 ) : (
                   <div className="space-y-4">
                     <div className="flex items-start justify-between gap-3">
@@ -383,12 +455,14 @@ export default function VolunteerDashboardPage() {
               </CardContent>
             </Card>
 
-            {/* Step 57 — Map */}
+            {/* Step 57 — Map (Phase 45: full journey you → donor → NGO) */}
             <Card>
               <CardHeader>
                 <div>
                   <CardTitle>Route</CardTitle>
-                  <CardDescription>Pickup to drop-off</CardDescription>
+                  <CardDescription>
+                    {volunteerPin ? 'You → donor pickup → NGO drop-off' : 'Pickup to drop-off'}
+                  </CardDescription>
                 </div>
                 {isTracking && (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700 ring-1 ring-blue-200/50">
@@ -408,6 +482,8 @@ export default function VolunteerDashboardPage() {
                     pickupLabel={assignment.donation.donorOrganization}
                     dropLabel={assignment.delivery?.dropLocation ?? 'Drop-off'}
                     currentLocation={position}
+                    origin={volunteerPin}
+                    originLabel="Your location"
                   />
                 ) : (
                   <EmptyState
@@ -420,6 +496,21 @@ export default function VolunteerDashboardPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Phase 45 — rescue & handout spots: donor location + nearby stations/bus stands/shelters */}
+          {rescueLoading ? (
+            <RescueSpotsPanelSkeleton />
+          ) : rescue ? (
+            <RescueSpotsPanel data={rescue} />
+          ) : rescueError ? (
+            <Card className="mt-6">
+              <CardContent className="py-6 text-center">
+                <AlertTriangle className="mx-auto size-8 text-amber-500" />
+                <p className="mt-2 text-sm font-medium text-neutral-900">Rescue not available</p>
+                <p className="mx-auto mt-1 max-w-md text-xs text-neutral-500">{rescueError}</p>
+              </CardContent>
+            </Card>
+          ) : null}
 
           {/* Recent deliveries */}
           <Card className="mt-6">
@@ -480,26 +571,6 @@ export default function VolunteerDashboardPage() {
 
           {/* Step 79 — Volunteer analytics */}
           <div className="mt-6 space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              {loading || !analytics
-                ? Array.from({ length: 5 }).map((_, i) => (
-                    <Card key={i}>
-                      <CardContent className="py-5">
-                        <Skeleton className="size-10 rounded-xl" />
-                        <Skeleton className="mt-4 h-8 w-20" />
-                        <Skeleton className="mt-2 h-4 w-24" />
-                      </CardContent>
-                    </Card>
-                  ))
-                : [
-                    { icon: Truck, label: 'Total deliveries', value: analytics.summary.deliveries, tone: 'text-brand-600 bg-brand-50' },
-                    { icon: Navigation, label: 'Total distance', value: analytics.summary.distanceKm, suffix: ' km', decimals: 1, tone: 'text-emerald-600 bg-emerald-50' },
-                    { icon: Soup, label: 'Total meals', value: analytics.summary.mealsDelivered, tone: 'text-teal-600 bg-teal-50' },
-                    { icon: Star, label: 'Rating', value: analytics.summary.rating, decimals: 1, suffix: ' / 5', tone: 'text-amber-600 bg-amber-50' },
-                    { icon: CheckCircle2, label: 'Completion rate', value: analytics.summary.completionRate, suffix: ' %', tone: 'text-lime-600 bg-lime-50' },
-                  ].map((kpi) => <KpiCard key={kpi.label} {...kpi} />)}
-            </div>
-
             <div className="grid gap-4 lg:grid-cols-3">
               <Card className="lg:col-span-2">
                 <CardHeader>
@@ -543,7 +614,7 @@ export default function VolunteerDashboardPage() {
                 </CardContent>
               </Card>
 
-              <NotificationsCard />
+              <NotificationsCard role="VOLUNTEER" />
             </div>
           </div>
         </>

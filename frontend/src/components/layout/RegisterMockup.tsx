@@ -8,7 +8,6 @@ const roles = [
 
 const steps = [
   { label: 'Account created', note: 'Done', done: true },
-  { label: 'Email confirmed', note: 'Done', done: true },
   { label: 'Charity verification', note: 'In progress', live: true },
   { label: 'You are live', note: 'Waiting', pending: true },
 ]
@@ -129,8 +128,8 @@ export default function RegisterMockup() {
               <CheckCircle2 className="size-3.5" />
             </span>
             <div>
-              <p className="text-[11px] font-semibold text-white">Email confirmed</p>
-              <p className="text-[9px] text-neutral-400">3 min ago</p>
+              <p className="text-[11px] font-semibold text-white">Account ready</p>
+              <p className="text-[9px] text-neutral-400">Just now</p>
             </div>
           </div>
         </div>

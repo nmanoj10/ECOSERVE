@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express'
 
 import { prisma } from '../config/prisma.js'
-import { refreshWithGoTrue } from '../services/goTrueService.js'
+import { createOrConfirmAuthUser, refreshWithGoTrue } from '../services/goTrueService.js'
 import {
   findSessionByHash,
   hashToken,
@@ -13,7 +13,7 @@ import {
 } from '../services/sessionService.js'
 import { HttpError } from '../utils/HttpError.js'
 import type { LogoutBody, RefreshBody } from '../validators/auth.js'
-import type { PendingRegistrationBody, RegisterBody } from '../validators/register.js'
+import type { PendingRegistrationBody, RegisterBody, SignupBody } from '../validators/register.js'
 
 /** How long a saved registration form stays valid (covers the signup link window). */
 const PENDING_REGISTRATION_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -73,6 +73,18 @@ export async function register(req: Request, res: Response): Promise<void> {
   })
 
   res.status(201).json({ user })
+}
+
+/**
+ * Creates a Supabase auth user that is already email-confirmed (no email is
+ * sent). Lets demo signups land directly in the app even while the project
+ * still has "Confirm email" enabled or the free-plan email quota is
+ * exhausted. The client signs in with the password immediately after.
+ */
+export async function createInstantSignup(req: Request, res: Response): Promise<void> {
+  const { email, password } = req.body as SignupBody
+  await createOrConfirmAuthUser(email, password)
+  res.status(201).json({ ok: true })
 }
 
 /**

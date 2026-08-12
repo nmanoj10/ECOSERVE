@@ -19,3 +19,13 @@ export function getRealtime(): Server | null {
 export function emitToUser(userId: string, event: string, payload: unknown): void {
   ioRef?.to(`user:${userId}`).emit(event, payload)
 }
+
+/**
+ * Emits `payload` to every socket in a delivery room (`delivery:{id}`).
+ * Delivery rooms are joined by the volunteer, donor and NGO, so this is how
+ * status transitions (started, approaching, completed) reach all watchers
+ * instantly without a page refresh. No-op when unset.
+ */
+export function emitToDeliveryRoom(deliveryId: string, event: string, payload: unknown): void {
+  ioRef?.to(`delivery:${deliveryId}`).emit(event, payload)
+}

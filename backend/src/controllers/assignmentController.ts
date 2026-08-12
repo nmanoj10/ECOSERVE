@@ -156,12 +156,14 @@ export async function createAssignment(req: Request, res: Response): Promise<voi
     throw err
   }
 
-  // Phase 29, Step 75 — "Volunteer assigned" in-app notification to the NGO and donor.
+  // Phase 29, Step 75 — "Volunteer assigned" in-app notification to the NGO,
+  // the donor, AND the volunteer themself so their dashboard shows the journey
+  // from the very first step.
   const title = `Delivery volunteer assigned: ${donation.foodName}`
   const message =
     `${volunteer.user.fullName}${volunteer.vehicleType ? ` (${volunteer.vehicleType})` : ''} is delivering ` +
     `${donation.foodName} to ${ngo.ngoName}${etaMinutes != null ? ` — ETA ~${etaMinutes} min` : ''}.`
-  const recipients = [...new Set([ngo.userId, donation.donor.userId])]
+  const recipients = [...new Set([ngo.userId, donation.donor.userId, volunteer.userId])]
   await notifyUsers(recipients, {
     title,
     message,

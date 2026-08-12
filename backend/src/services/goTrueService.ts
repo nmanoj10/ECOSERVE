@@ -51,3 +51,59 @@ export async function refreshWithGoTrue(refreshToken: string): Promise<TokenPair
     expiresIn: typeof data.expires_in === 'number' ? data.expires_in : 3600,
   }
 }
+
+/**
+ * Creates a Supabase auth user that is already email-confirmed via the Admin
+ * API (`email_confirm: true` — no confirmation email is sent). Powers
+ * `POST /auth/signup` so demo signups work instantly even while the project
+ * still has "Confirm email" enabled (and sidesteps the free-plan email quota).
+ *
+ * If the email is already registered (e.g. an earlier signup left an
+ * unconfirmed user), the existing account is confirmed instead of failing.
+ */
+export async function createOrConfirmAuthUser(email: string, password: string): Promise<void> {
+  const headers = {
+    apikey: env.SUPABASE_SECRET_KEY,
+    Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}`,
+    'Content-Type': 'application/json',
+  }
+
+  const createRes = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ email, password, email_confirm: true }),
+  })
+
+  if (createRes.ok) return
+
+  const createData = (await createRes.json().catch(() => null)) as { error_code?: string; msg?: string } | null
+  const alreadyRegistered =
+    createRes.status === 409 ||
+    createRes.status === 422 ||
+    createData?.error_code === 'user_already_exists' ||
+    (typeof createData?.msg === 'string' && createData.msg.toLowerCase().includes('already been registered'))
+
+  if (alreadyRegistered) {
+    // The account exists (possibly unconfirmed from a previous signup) — find
+    // it and mark the email confirmed, so login works immediately.
+    const listRes = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users?email=${encodeURIComponent(email)}`, {
+      headers,
+    })
+    const listData = (await listRes.json().catch(() => null)) as { users?: Array<{ id?: string }> } | null
+    const userId = listData?.users?.[0]?.id
+    if (userId) {
+      const updateRes = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ email_confirm: true }),
+      })
+      if (updateRes.ok) return
+    }
+  }
+
+  throw new HttpError(
+    400,
+    'SIGNUP_FAILED',
+    typeof createData?.msg === 'string' ? createData.msg : 'Could not create account',
+  )
+}

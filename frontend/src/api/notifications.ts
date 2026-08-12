@@ -7,6 +7,8 @@ export interface NotificationItem {
   type: string
   isRead: boolean
   createdAt: string
+  /** Phase 45 — the donation this alert is about (rescue alerts link to it). */
+  donationId?: string | null
 }
 
 export interface NotificationsPage {

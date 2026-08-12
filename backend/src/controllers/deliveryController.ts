@@ -1,15 +1,12 @@
 import type { Request, Response } from 'express'
 
 import { prisma } from '../config/prisma.js'
+import { maybeNotifyApproaching } from '../services/deliveryService.js'
 import { notifyUsers, NOTIFICATION_TYPES } from '../services/notificationService.js'
-import { emitToUser } from '../services/realtime.js'
-import { haversineKm } from '../utils/geo.js'
+import { emitToDeliveryRoom, emitToUser } from '../services/realtime.js'
 import { HttpError } from '../utils/HttpError.js'
 import type { SubmitLocationBody } from '../validators/location.js'
 import type { DeliveryStatus } from '../validators/statuses.js'
-
-/** Within this distance of the drop point, the NGO + donor are told the volunteer is arriving. */
-const APPROACH_RADIUS_KM = 0.5
 
 /** The one status a delivery must be in for the volunteer to start collecting and heading out. */
 const STARTABLE_STATUS: DeliveryStatus = 'VOLUNTEER_ASSIGNED'
@@ -106,7 +103,8 @@ export async function startDelivery(req: Request, res: Response): Promise<void> 
   })
 
   // Phase 29, Step 75 — two in-app notifications: the pickup happened, and the
-  // delivery leg has started. Both go to the donor + NGO.
+  // delivery leg has started. Both go to the donor + NGO (and the volunteer
+  // gets a first-person confirmation so their dashboard shows the journey).
   const recipients: string[] = [donation.donor.userId]
   if (ngo?.userId) recipients.push(ngo.userId)
 
@@ -125,6 +123,26 @@ export async function startDelivery(req: Request, res: Response): Promise<void> 
       `to ${ngo?.ngoName ?? 'the NGO'}.`,
     type: NOTIFICATION_TYPES.DELIVERY_STARTED,
     donationId: donation.id,
+  })
+  await notifyUsers([user.userId], {
+    title: `Pickup started: ${donation.foodName}`,
+    message: `You picked up ${donation.foodName} from ${donation.donor.organizationName}. Head to ${ngo?.ngoName ?? 'the NGO'}.`,
+    type: NOTIFICATION_TYPES.PICKUP_STARTED,
+    donationId: donation.id,
+  })
+  await notifyUsers([user.userId], {
+    title: `In transit: ${donation.foodName}`,
+    message: `You're delivering ${donation.foodName} to ${ngo?.ngoName ?? 'the NGO'}. Drive safe!`,
+    type: NOTIFICATION_TYPES.DELIVERY_STARTED,
+    donationId: donation.id,
+  })
+
+  // Realtime: broadcast the status flip to the delivery room so every watcher
+  // (volunteer, donor, NGO) sees "In transit" the moment pickup happens.
+  emitToDeliveryRoom(id, 'delivery:status', {
+    deliveryId: id,
+    status: 'IN_TRANSIT',
+    startedAt: now.toISOString(),
   })
 
   res.json({
@@ -219,35 +237,15 @@ export async function submitLocation(req: Request, res: Response): Promise<void>
     })
   }
 
-  // Phase 29, Step 75 — "Volunteer approaching" alert. Fires exactly once per
-  // delivery: the first GPS sample within APPROACH_RADIUS_KM of the drop point
-  // flips `approachingNotifiedAt` (atomic guarded update), so later pings never
-  // spam the NGO or donor.
-  const ngo = assignment?.donation.requests[0]?.ngo
-  if (
-    delivery.approachingNotifiedAt == null &&
-    ngo?.latitude != null &&
-    ngo.longitude != null &&
-    haversineKm(body.latitude, body.longitude, ngo.latitude, ngo.longitude) <= APPROACH_RADIUS_KM
-  ) {
-    const claimed = await prisma.delivery.updateMany({
-      where: { id, approachingNotifiedAt: null },
-      data: { approachingNotifiedAt: new Date() },
-    })
-
-    if (claimed.count === 1) {
-      const approachingRecipients: string[] = [assignment!.donation.donor.userId]
-      if (ngo.userId) approachingRecipients.push(ngo.userId)
-
-      await notifyUsers(approachingRecipients, {
-        title: `${assignment!.volunteer.user.fullName} is almost there`,
-        message:
-          `${assignment!.volunteer.user.fullName} is within ${Math.round(APPROACH_RADIUS_KM * 1000)} m of ` +
-          `${ngo.ngoName} with ${assignment!.donation.foodName}.`,
-        type: NOTIFICATION_TYPES.VOLUNTEER_APPROACHING,
-        donationId: assignment!.donation.id,
-      })
-    }
+  // Phase 29, Step 75 — once-only "Volunteer approaching" alert. Shared with
+  // the Socket.IO GPS path (deliveryService.maybeNotifyApproaching), so the
+  // volunteer's live position is treated identically on either channel.
+  if (assignment) {
+    await maybeNotifyApproaching(
+      { id: delivery.id, approachingNotifiedAt: delivery.approachingNotifiedAt, assignment },
+      body.latitude,
+      body.longitude,
+    )
   }
 
   res.status(201).json({ location: record })
@@ -440,6 +438,20 @@ export async function completeDelivery(req: Request, res: Response): Promise<voi
       `${ngo?.ngoName ?? 'the NGO'}. Thank you for saving food!`,
     type: NOTIFICATION_TYPES.DELIVERY_COMPLETED,
     donationId: donation.id,
+  })
+  await notifyUsers([user.userId], {
+    title: `Delivery completed: ${donation.foodName}`,
+    message: `You delivered ${donation.foodName} to ${ngo?.ngoName ?? 'the NGO'}. Great job saving food!`,
+    type: NOTIFICATION_TYPES.DELIVERY_COMPLETED,
+    donationId: donation.id,
+  })
+
+  // Realtime: broadcast the terminal status flip to the delivery room so
+  // donor + NGO maps move to "Delivered" immediately.
+  emitToDeliveryRoom(id, 'delivery:status', {
+    deliveryId: id,
+    status: 'DELIVERED',
+    completedAt: now.toISOString(),
   })
 
   res.json({

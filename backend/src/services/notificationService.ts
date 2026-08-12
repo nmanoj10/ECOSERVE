@@ -9,7 +9,7 @@ import { emitToUser } from './realtime.js'
  * Socket.IO (the `user:{id}` room), so the dashboard bell updates without a
  * page reload. There is deliberately no email path — this is in-app only.
  *
- * The seven events of the notification system map to these stable type codes:
+ * The events of the notification system map to these stable type codes:
  *   Donation accepted      → REQUEST
  *   Volunteer assigned     → ASSIGNMENT
  *   Pickup started         → PICKUP
@@ -18,6 +18,8 @@ import { emitToUser } from './realtime.js'
  *   Delivery completed     → COMPLETED
  *   Food expiring          → RESCUE
  *   NGO verified/rejected  → VERIFICATION (Phase 32, Step 83)
+ *   Volunteers needed      → NEEDED (food claimed by an NGO, nearby volunteers
+ *                            get pinged to offer pickup/delivery help)
  */
 export const NOTIFICATION_TYPES = {
   DONATION_ACCEPTED: 'REQUEST',
@@ -28,6 +30,7 @@ export const NOTIFICATION_TYPES = {
   DELIVERY_COMPLETED: 'COMPLETED',
   FOOD_EXPIRING: 'RESCUE',
   NGO_VERIFIED: 'VERIFICATION',
+  VOLUNTEER_NEEDED: 'NEEDED',
 } as const
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[keyof typeof NOTIFICATION_TYPES]
@@ -66,7 +69,15 @@ export async function notifyUsers(
   const rows = await Promise.all(
     ids.map((userId) =>
       client.notification.create({
-        data: { userId, title: options.title, message: options.message, type: options.type },
+        data: {
+          userId,
+          title: options.title,
+          message: options.message,
+          type: options.type,
+          // Phase 45 — persist the donation link so rescue alerts can offer an
+          // "Accept rescue" action that opens the donor + handout spots map.
+          ...(options.donationId ? { donationId: options.donationId } : {}),
+        },
       }),
     ),
   )

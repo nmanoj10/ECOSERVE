@@ -16,6 +16,13 @@ interface DeliveryMapProps {
   dropLabel: string
   /** Current GPS position — renders a live blue moving marker. */
   currentLocation?: MapPoint | null
+  /**
+   * Phase 45 — optional start point (the volunteer's saved location). When
+   * set, the route becomes origin → pickup → drop so the volunteer sees the
+   * full journey to the donor and on to the NGO.
+   */
+  origin?: MapPoint | null
+  originLabel?: string
 }
 
 /** Blue dot for the volunteer's live GPS position. */
@@ -42,14 +49,35 @@ const dropIcon = L.divIcon({
   popupAnchor: [0, -26],
 })
 
+/** Emerald "You" marker for the volunteer's starting point (Phase 45). */
+const originIcon = L.divIcon({
+  className: '',
+  html: '<span class="flex size-7 items-center justify-center rounded-full bg-emerald-600 text-sm shadow-lg ring-2 ring-white">🧍</span>',
+  iconSize: [28, 28],
+  iconAnchor: [14, 28],
+  popupAnchor: [0, -26],
+})
+
 /**
  * Map of the current assignment: pickup → drop.
  *
  * When the routing service (Phase 24, Step 65) returns a road route the
  * polyline follows the actual road geometry.  On failure or while loading it
  * falls back to a straight dashed line so the map never stays empty.
+ *
+ * Phase 45 — with an `origin` the map shows the full journey the volunteer
+ * accepted: origin (you) → pickup (donor) → drop (NGO), with each leg drawn
+ * from real road geometry and a straight dashed line only when a leg fails.
  */
-export function DeliveryMap({ pickup, drop, pickupLabel, dropLabel, currentLocation }: DeliveryMapProps) {
+export function DeliveryMap({
+  pickup,
+  drop,
+  pickupLabel,
+  dropLabel,
+  currentLocation,
+  origin,
+  originLabel = 'You',
+}: DeliveryMapProps) {
   const [route, setRoute] = useState<RouteResult | null | 'loading'>('loading')
 
   useEffect(() => {
@@ -57,6 +85,29 @@ export function DeliveryMap({ pickup, drop, pickupLabel, dropLabel, currentLocat
 
     const fetchRoute = async () => {
       setRoute('loading')
+
+      if (origin) {
+        // Two legs: volunteer → donor, then donor → NGO. A failed leg falls
+        // back to a straight dashed line so the map never stays empty.
+        const [toPickup, toDrop] = await Promise.all([getRoute(origin, pickup), getRoute(pickup, drop)])
+        if (!active) return
+        if (!toPickup && !toDrop) {
+          setRoute(null)
+          return
+        }
+        const geometry: Array<[number, number]> = []
+        if (toPickup) geometry.push(...toPickup.geometry)
+        else geometry.push([origin.latitude, origin.longitude], [pickup.latitude, pickup.longitude])
+        if (toDrop) geometry.push(...toDrop.geometry)
+        else geometry.push([pickup.latitude, pickup.longitude], [drop.latitude, drop.longitude])
+        setRoute({
+          geometry,
+          distanceKm: Math.round(((toPickup?.distanceKm ?? 0) + (toDrop?.distanceKm ?? 0)) * 10) / 10,
+          durationSec: (toPickup?.durationSec ?? 0) + (toDrop?.durationSec ?? 0),
+        })
+        return
+      }
+
       const result = await getRoute(pickup, drop)
       if (active) setRoute(result)
     }
@@ -66,13 +117,24 @@ export function DeliveryMap({ pickup, drop, pickupLabel, dropLabel, currentLocat
     return () => {
       active = false
     }
-  }, [pickup.latitude, pickup.longitude, drop.latitude, drop.longitude])
+  }, [pickup.latitude, pickup.longitude, drop.latitude, drop.longitude, origin?.latitude, origin?.longitude])
 
-  const bounds = L.latLngBounds([pickup.latitude, pickup.longitude], [drop.latitude, drop.longitude])
-  const straightLine: Array<[number, number]> = [
-    [pickup.latitude, pickup.longitude],
-    [drop.latitude, drop.longitude],
-  ]
+  const bounds = origin
+    ? L.latLngBounds([origin.latitude, origin.longitude], [pickup.latitude, pickup.longitude]).extend([
+        drop.latitude,
+        drop.longitude,
+      ])
+    : L.latLngBounds([pickup.latitude, pickup.longitude], [drop.latitude, drop.longitude])
+  const straightLine: Array<[number, number]> = origin
+    ? [
+        [origin.latitude, origin.longitude],
+        [pickup.latitude, pickup.longitude],
+        [drop.latitude, drop.longitude],
+      ]
+    : [
+        [pickup.latitude, pickup.longitude],
+        [drop.latitude, drop.longitude],
+      ]
 
   return (
     <MapContainer
@@ -108,6 +170,15 @@ export function DeliveryMap({ pickup, drop, pickupLabel, dropLabel, currentLocat
           })}
         />
       )}
+
+      {origin &&
+        (!currentLocation ||
+          origin.latitude !== currentLocation.latitude ||
+          origin.longitude !== currentLocation.longitude) && (
+          <Marker position={[origin.latitude, origin.longitude]} icon={originIcon}>
+            <Popup>{originLabel} — start</Popup>
+          </Marker>
+        )}
 
       <Marker position={[pickup.latitude, pickup.longitude]} icon={pickupIcon}>
         <Popup>{pickupLabel} — pickup</Popup>

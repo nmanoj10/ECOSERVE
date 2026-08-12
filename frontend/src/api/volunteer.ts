@@ -146,3 +146,60 @@ export async function fetchActiveDeliveries(): Promise<{ deliveries: ActiveDeliv
 export async function completeDelivery(deliveryId: string): Promise<void> {
   await api.post(`/v1/deliveries/${deliveryId}/complete`)
 }
+
+/**
+ * Phase 21, Step 60 — A volunteer accepts a claimed donation (from a
+ * "Volunteers needed" alert). Creates the assignment + delivery run in one
+ * transaction, flips the volunteer to BUSY, and notifies NGO + donor.
+ */
+export async function acceptDelivery(donationId: string): Promise<void> {
+  await api.post('/v1/assignments', { donationId })
+}
+
+/** Phase 45 — a spot near the pickup where food can be handed out (OSM data). */
+export interface RescueSpot {
+  name: string
+  type: 'railway_station' | 'bus_stand' | 'homeless_shelter' | 'worship' | 'community_centre'
+  /** Human-readable category, e.g. "railway station". */
+  label: string
+  /** Best-effort street/city address from OSM (null when not mapped). */
+  address: string | null
+  latitude: number
+  longitude: number
+  /** Straight-line distance from the pickup point, in km. */
+  distanceKm: number
+  /** Google Maps link for directions. */
+  mapsUrl: string
+}
+
+/** Phase 45 — the rescue mission: donor pickup + handout spots around it. */
+export interface RescueSpotsResponse {
+  donation: {
+    id: string
+    foodName: string
+    quantity: number
+    unit: string
+    donorOrganization: string
+    pickupAddress: string
+    expiryTime: string | null
+    status: string
+  } | null
+  /** Donor pickup coordinates (donation pin, else the donor profile pin). */
+  pickup: { latitude: number; longitude: number } | null
+  pickupMapsUrl: string | null
+  spots: RescueSpot[]
+}
+
+/**
+ * Phase 45 — GET /v1/volunteer/rescue-spots.
+ *
+ * Donor location + nearby railway stations, bus stands and homeless-gathering
+ * spots for a rescue donation. Pass `donationId` to target a specific rescue
+ * alert; without it the endpoint anchors on the current active assignment.
+ */
+export async function fetchRescueSpots(donationId?: string): Promise<RescueSpotsResponse> {
+  const { data } = await api.get<RescueSpotsResponse>('/v1/volunteer/rescue-spots', {
+    params: donationId ? { donationId } : {},
+  })
+  return data
+}

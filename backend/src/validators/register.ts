@@ -53,3 +53,15 @@ export const pendingRegistrationSchema = z.object({
 })
 
 export type PendingRegistrationBody = z.infer<typeof pendingRegistrationSchema>
+
+/**
+ * Instant demo signup — the backend creates the auth user pre-confirmed via
+ * the Admin API (no confirmation email). Password rules mirror the register
+ * form, so the frontend schema and this stay in sync.
+ */
+export const signupSchema = z.object({
+  email: z.string().email('Enter a valid email'),
+  password: z.string().min(8, 'At least 8 characters'),
+})
+
+export type SignupBody = z.infer<typeof signupSchema>

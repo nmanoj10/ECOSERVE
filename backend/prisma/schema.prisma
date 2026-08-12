@@ -361,17 +361,22 @@ model AiPrediction {
 
 /// A user-facing notification (also pushed in realtime via Socket.IO)
 model Notification {
-  id        String   @id @default(cuid())
-  userId    String
-  title     String
-  message   String
+  id         String   @id @default(cuid())
+  userId     String
+  title      String
+  message    String
   type      String // DONATION | REQUEST | DELIVERY | REVIEW | SYSTEM | ...
   isRead    Boolean  @default(false)
+  // Phase 45 — donation this alert is about. Persisted so rescue alerts can
+  // render an "Accept rescue" action that opens the donor location + handout
+  // spots map for that specific donation.
+  donationId String?
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isRead])
+  @@index([donationId])
   @@index([isRead])
   @@map("notifications")
 }

@@ -49,7 +49,11 @@ vi.mock('@/api/auth', () => ({
 
 vi.mock('@/api/analytics', () => ({ fetchDonorAnalytics: vi.fn() }))
 vi.mock('@/api/donations', () => ({ fetchDonations: vi.fn() }))
-vi.mock('@/api/volunteer', () => ({ fetchActiveDeliveries: vi.fn() }))
+vi.mock('@/api/volunteer', () => ({
+  fetchActiveDeliveries: vi.fn(),
+  // Phase 45 — imported by NotificationsCard (accept-delivery action).
+  acceptDelivery: vi.fn(),
+}))
 
 vi.mock('@/api/notifications', () => ({
   fetchNotifications: vi.fn().mockResolvedValue({ notifications: [], unreadCount: 0 }),

@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express'
 
 import { prisma } from '../config/prisma.js'
+import { findNearbyTransitPoints } from '../services/transitService.js'
 import { HttpError } from '../utils/HttpError.js'
 import { estimateMeals } from '../utils/meals.js'
 import type { UpdateAvailabilityBody, UpdateVolunteerProfileBody } from '../validators/volunteer.js'
@@ -229,4 +230,106 @@ export async function updateProfile(req: Request, res: Response): Promise<void> 
   })
 
   res.json({ volunteer: updated })
+}
+
+/** The donation shape the rescue map needs, donor pin included. */
+interface RescueDonation {
+  id: string
+  foodName: string
+  quantity: number
+  unit: string
+  pickupAddress: string
+  expiryTime: Date | null
+  status: string
+  latitude: number | null
+  longitude: number | null
+  donor: { organizationName: string; latitude: number | null; longitude: number | null }
+  /** Present when the donation was fetched by id — the volunteer's own assignment. */
+  assignments?: Array<{ id: string }>
+}
+
+/**
+ * Phase 45 — GET /api/v1/volunteer/rescue-spots?donationId=…
+ *
+ * The rescue map for a volunteer who accepted a rescue alert: the donor's
+ * pickup location plus nearby railway stations, bus stands and spots where
+ * homeless people gather (with street addresses), so the volunteer can pick
+ * up the food and hand it out directly. Without `donationId` it anchors on
+ * the volunteer's current active assignment (its donation's pickup).
+ */
+export async function rescueSpots(req: Request, res: Response): Promise<void> {
+  const user = req.user!
+  const donationId =
+    typeof req.query.donationId === 'string' && req.query.donationId.trim().length > 0
+      ? req.query.donationId.trim()
+      : null
+
+  const volunteer = await prisma.volunteer.findUnique({ where: { userId: user.userId } })
+  if (!volunteer) {
+    throw new HttpError(409, 'PROFILE_INCOMPLETE', 'Volunteer profile not found — complete registration first')
+  }
+
+  let donation: RescueDonation
+
+  if (donationId) {
+    const found = await prisma.donation.findUnique({
+      where: { id: donationId },
+      include: {
+        donor: { select: { organizationName: true, latitude: true, longitude: true } },
+        assignments: { where: { volunteerId: volunteer.id }, select: { id: true } },
+      },
+    })
+    if (!found) {
+      throw new HttpError(404, 'NOT_FOUND', 'Donation not found')
+    }
+    // A rescue alert is only actionable while the food is unclaimed — unless
+    // the volunteer is already assigned to this donation.
+    if (found.status !== 'AVAILABLE' && found.assignments.length === 0) {
+      throw new HttpError(409, 'NOT_AVAILABLE', 'This donation is no longer available for rescue')
+    }
+    donation = found
+  } else {
+    const current = await prisma.volunteerAssignment.findFirst({
+      where: { volunteerId: volunteer.id, status: { in: ['PENDING', 'ACCEPTED', 'IN_TRANSIT'] } },
+      orderBy: { assignedAt: 'desc' },
+      include: {
+        donation: {
+          include: { donor: { select: { organizationName: true, latitude: true, longitude: true } } },
+        },
+      },
+    })
+    if (!current) {
+      res.json({ donation: null, pickup: null, pickupMapsUrl: null, spots: [] })
+      return
+    }
+    donation = current.donation
+  }
+
+  const dLat = donation.latitude ?? donation.donor.latitude
+  const dLng = donation.longitude ?? donation.donor.longitude
+  if (dLat == null || dLng == null) {
+    throw new HttpError(409, 'NO_LOCATION', 'This donation has no location pin — use the pickup address instead')
+  }
+
+  // Best-effort — Overpass outages degrade to an empty spot list, never an error.
+  const spots = await findNearbyTransitPoints(dLat, dLng, 5000, 10).catch(() => [])
+
+  res.json({
+    donation: {
+      id: donation.id,
+      foodName: donation.foodName,
+      quantity: donation.quantity,
+      unit: donation.unit,
+      donorOrganization: donation.donor.organizationName,
+      pickupAddress: donation.pickupAddress,
+      expiryTime: donation.expiryTime,
+      status: donation.status,
+    },
+    pickup: { latitude: dLat, longitude: dLng },
+    pickupMapsUrl: `https://maps.google.com/?q=${dLat.toFixed(5)},${dLng.toFixed(5)}`,
+    spots: spots.map((spot) => ({
+      ...spot,
+      mapsUrl: `https://maps.google.com/?q=${spot.latitude.toFixed(5)},${spot.longitude.toFixed(5)}`,
+    })),
+  })
 }
