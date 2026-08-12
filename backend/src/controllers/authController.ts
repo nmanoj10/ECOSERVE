@@ -13,7 +13,10 @@ import {
 } from '../services/sessionService.js'
 import { HttpError } from '../utils/HttpError.js'
 import type { LogoutBody, RefreshBody } from '../validators/auth.js'
-import type { RegisterBody } from '../validators/register.js'
+import type { PendingRegistrationBody, RegisterBody } from '../validators/register.js'
+
+/** How long a saved registration form stays valid (covers the signup link window). */
+const PENDING_REGISTRATION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * Creates the platform `users` row (id = Supabase auth user id) plus the
@@ -35,6 +38,9 @@ export async function register(req: Request, res: Response): Promise<void> {
 
   const existing = await prisma.user.findUnique({ where: { id: sub } })
   if (existing) {
+    // Already registered — consume any stale saved form for this email so the
+    // invariant "registered ⇒ no pending row" holds.
+    await prisma.pendingRegistration.deleteMany({ where: { email } })
     res.status(200).json({ user: existing })
     return
   }
@@ -59,10 +65,53 @@ export async function register(req: Request, res: Response): Promise<void> {
       await tx.volunteer.create({ data: { userId: sub, ...body.volunteer } })
     }
 
+    // Registration is complete — consume the saved form (if any) so it can't
+    // be replayed on a later visit.
+    await tx.pendingRegistration.deleteMany({ where: { email } })
+
     return created
   })
 
   res.status(201).json({ user })
+}
+
+/**
+ * Saves the registration form before email confirmation. The confirmation link
+ * lands the user back in the app, where `getPendingRegistration` picks the form
+ * up and completes the profile — even when the link is opened on a different
+ * browser or device. Upserts per email, so re-signups overwrite stale forms.
+ */
+export async function savePendingRegistration(req: Request, res: Response): Promise<void> {
+  const { email, payload } = req.body as PendingRegistrationBody
+  const expiresAt = new Date(Date.now() + PENDING_REGISTRATION_TTL_MS)
+
+  // Opportunistic sweep so abandoned signups don't accumulate forever.
+  await prisma.pendingRegistration.deleteMany({ where: { expiresAt: { lt: new Date() } } })
+
+  // NOTE: this endpoint is public (no session yet at signup) but sits behind
+  // the auth rate limiter. Overwriting someone else's pending form is only a
+  // mild nuisance — a corrupted form fails validation on completion and the
+  // user just re-fills it — never a way to take over their account.
+  await prisma.pendingRegistration.upsert({
+    where: { email },
+    update: { payload, expiresAt },
+    create: { email, payload, expiresAt },
+  })
+
+  res.status(201).json({ registration: { email } })
+}
+
+/** Returns the authenticated user's saved registration form, if still valid. */
+export async function getPendingRegistration(req: Request, res: Response): Promise<void> {
+  const email = req.user!.email
+  const registration = await prisma.pendingRegistration.findUnique({ where: { email } })
+
+  if (!registration || registration.expiresAt.getTime() < Date.now()) {
+    res.json({ registration: null })
+    return
+  }
+
+  res.json({ registration: { email: registration.email, payload: registration.payload } })
 }
 
 /** Returns the authenticated user with their role profile. */

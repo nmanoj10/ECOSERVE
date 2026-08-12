@@ -27,6 +27,7 @@ import {
 } from '@/api/volunteer'
 import { CountUp } from '@/components/home/CountUp'
 import DashboardShell from '@/components/layout/DashboardShell'
+import NotificationsCard from '@/components/notifications/NotificationsCard'
 import { DeliveryMap } from '@/components/maps/DeliveryMap'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -119,8 +120,10 @@ export default function VolunteerDashboardPage() {
   const [analytics, setAnalytics] = useState<VolunteerAnalytics | null>(null)
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true)
-    setError(null)
+    if (!opts?.silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const [me, stats, analyticsData] = await Promise.all([
         fetchMe(),
@@ -146,6 +149,12 @@ export default function VolunteerDashboardPage() {
 
   useEffect(() => {
     load()
+  }, [load])
+
+  // Realtime: refresh dashboard data every minute so statuses/KPIs stay current.
+  useEffect(() => {
+    const id = setInterval(() => void load({ silent: true }), 60_000)
+    return () => clearInterval(id)
   }, [load])
 
   /** Step 58 — toggle availability, optimistically. */
@@ -491,47 +500,51 @@ export default function VolunteerDashboardPage() {
                   ].map((kpi) => <KpiCard key={kpi.label} {...kpi} />)}
             </div>
 
-            <Card>
-              <CardHeader>
-                <div>
-                  <CardTitle>Deliveries by month</CardTitle>
-                  <CardDescription>Completed runs per month, last 6 months</CardDescription>
-                </div>
-                <Badge variant="success" dot>
-                  Live
-                </Badge>
-              </CardHeader>
-              <CardContent>
-                {loading || !analytics ? (
-                  <Skeleton className="h-56 w-full rounded-xl" />
-                ) : monthlyDeliveries.every((point) => point.deliveries === 0) ? (
-                  <p className="py-10 text-center text-sm text-neutral-500">
-                    No completed deliveries yet — your monthly stats will appear here.
-                  </p>
-                ) : (
-                  <div className="h-56 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={monthlyDeliveries} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                        <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#a3a3a3' }} axisLine={false} tickLine={false} />
-                        <YAxis
-                          allowDecimals={false}
-                          tick={{ fontSize: 12, fill: '#a3a3a3' }}
-                          axisLine={false}
-                          tickLine={false}
-                          width={40}
-                        />
-                        <Tooltip
-                          content={<ChartTooltip valueLabel={(value) => `${value} deliveries`} />}
-                          cursor={{ fill: '#fafafa' }}
-                        />
-                        <Bar dataKey="deliveries" fill="#0d9488" radius={[6, 6, 0, 0]} maxBarSize={40} />
-                      </BarChart>
-                    </ResponsiveContainer>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <div>
+                    <CardTitle>Deliveries by month</CardTitle>
+                    <CardDescription>Completed runs per month, last 6 months</CardDescription>
                   </div>
-                )}
-              </CardContent>
-            </Card>
+                  <Badge variant="success" dot>
+                    Live
+                  </Badge>
+                </CardHeader>
+                <CardContent>
+                  {loading || !analytics ? (
+                    <Skeleton className="h-56 w-full rounded-xl" />
+                  ) : monthlyDeliveries.every((point) => point.deliveries === 0) ? (
+                    <p className="py-10 text-center text-sm text-neutral-500">
+                      No completed deliveries yet — your monthly stats will appear here.
+                    </p>
+                  ) : (
+                    <div className="h-56 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={monthlyDeliveries} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                          <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#a3a3a3' }} axisLine={false} tickLine={false} />
+                          <YAxis
+                            allowDecimals={false}
+                            tick={{ fontSize: 12, fill: '#a3a3a3' }}
+                            axisLine={false}
+                            tickLine={false}
+                            width={40}
+                          />
+                          <Tooltip
+                            content={<ChartTooltip valueLabel={(value) => `${value} deliveries`} />}
+                            cursor={{ fill: '#fafafa' }}
+                          />
+                          <Bar dataKey="deliveries" fill="#0d9488" radius={[6, 6, 0, 0]} maxBarSize={40} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <NotificationsCard />
+            </div>
           </div>
         </>
       )}

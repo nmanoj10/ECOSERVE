@@ -41,3 +41,15 @@ export const registerSchema = z.object({
 })
 
 export type RegisterBody = z.infer<typeof registerSchema>
+
+/**
+ * The registration form saved before email confirmation. `payload` mirrors
+ * the body accepted by `POST /auth/register`, so the confirmation-link
+ * landing can complete the exact profile the user filled in.
+ */
+export const pendingRegistrationSchema = z.object({
+  email: z.string().email('Enter a valid email'),
+  payload: registerSchema,
+})
+
+export type PendingRegistrationBody = z.infer<typeof pendingRegistrationSchema>

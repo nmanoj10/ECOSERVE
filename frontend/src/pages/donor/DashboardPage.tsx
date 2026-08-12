@@ -1,12 +1,9 @@
 import type { LucideIcon } from 'lucide-react'
 import {
-  AlertTriangle,
   CalendarClock,
   CheckCircle2,
   Clock,
-  Info,
   Leaf,
-  Lightbulb,
   MapPin,
   PackageCheck,
   Recycle,
@@ -36,9 +33,10 @@ import {
 
 import { fetchDonorAnalytics, type DonorAnalytics } from '@/api/analytics'
 import { fetchMe } from '@/api/auth'
-import { fetchDonations, type DonationListItem } from '@/api/donations'
+import { fetchDonation, fetchDonations, type DonationDetail, type DonationListItem } from '@/api/donations'
 import { fetchActiveDeliveries, type ActiveDelivery } from '@/api/volunteer'
 import DashboardShell from '@/components/layout/DashboardShell'
+import NotificationsCard from '@/components/notifications/NotificationsCard'
 import { donorNav } from '@/pages/donor/nav'
 import { CountUp } from '@/components/home/CountUp'
 import { Badge, type BadgeVariant } from '@/components/ui/Badge'
@@ -48,67 +46,17 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
-import { useToast } from '@/components/ui/Toast'
 import { LiveTrackingMap } from '@/components/maps/LiveTrackingMap'
 import { useAuth } from '@/hooks/useAuth'
 import type { UserProfile } from '@/types/user'
 
-// ── Demo data (sections still awaiting their later phases) ──
-
-const pickupSteps = [
-  { label: 'Scheduled', done: true },
-  { label: 'Picked up', done: false },
-  { label: 'Delivered', done: false },
-]
+// ── Helpers (all derived from live API data — no hardcoded demo content) ──
 
 interface Insight {
   icon: LucideIcon
   title: string
   text: string
   tone: string
-}
-
-const insights: Insight[] = [
-  {
-    icon: Lightbulb,
-    title: 'Best pickup time',
-    text: 'Saturday evening pickups match 30% more NGOs in your area.',
-    tone: 'bg-amber-50 text-amber-600',
-  },
-  {
-    icon: TrendingUp,
-    title: 'Surplus pattern',
-    text: 'Your bakery surplus peaks on Fridays — schedule a standing pickup ahead.',
-    tone: 'bg-brand-50 text-brand-600',
-  },
-  {
-    icon: Zap,
-    title: 'Impact tip',
-    text: 'Splitting large donations across two NGOs raises acceptance by 22%.',
-    tone: 'bg-emerald-50 text-emerald-600',
-  },
-]
-
-interface NotificationItem {
-  id: string
-  kind: 'success' | 'info' | 'warning' | 'milestone'
-  title: string
-  message: string
-  time: string
-}
-
-const initialNotifications: NotificationItem[] = [
-  { id: 'n1', kind: 'success', title: 'Delivery confirmed', message: 'Hope Shelter received 24 meals from your Sunday donation.', time: '2m ago' },
-  { id: 'n2', kind: 'info', title: 'New NGO match', message: 'Annapurna Trust can accept your surplus tomorrow morning.', time: '1h ago' },
-  { id: 'n3', kind: 'warning', title: 'Freshness alert', message: 'Your Friday pickup needs a volunteer — can you extend the window?', time: '3h ago' },
-  { id: 'n4', kind: 'milestone', title: 'Impact milestone', message: 'You hit 1,000 kg saved this quarter. Thank you!', time: '1d ago' },
-]
-
-const notificationStyle: Record<NotificationItem['kind'], { icon: LucideIcon; classes: string }> = {
-  success: { icon: CheckCircle2, classes: 'bg-emerald-50 text-emerald-600' },
-  info: { icon: Info, classes: 'bg-brand-50 text-brand-600' },
-  warning: { icon: AlertTriangle, classes: 'bg-amber-50 text-amber-600' },
-  milestone: { icon: Sparkles, classes: 'bg-teal-50 text-teal-600' },
 }
 
 function ChartTooltip({
@@ -131,7 +79,7 @@ function ChartTooltip({
   )
 }
 
-/** "2026-02" → "Feb" for chart axes. */
+/** \"2026-02\" → \"Feb\" for chart axes. */
 function monthShort(isoMonth: string): string {
   const [year, month] = isoMonth.split('-').map(Number)
   return new Date(year, month - 1, 1).toLocaleString('en', { month: 'short' })
@@ -150,40 +98,135 @@ const DONATION_STATUS: Record<string, { label: string; variant: BadgeVariant }> 
   CANCELLED: { label: 'Cancelled', variant: 'danger' },
 }
 
-/** "Jul 14" for the recent-donations table. */
+/** \"Jul 14\" for the recent-donations table. */
 function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en', { month: 'short', day: 'numeric' })
 }
 
+/** \"2026-08-13T18:00:00Z\" → \"Tomorrow, 18:00\". */
+function formatPickupTime(iso: string): string {
+  const date = new Date(iso)
+  const now = new Date()
+  const tomorrow = new Date(now.getTime() + 86_400_000)
+  const day =
+    date.toDateString() === now.toDateString()
+      ? 'Today'
+      : date.toDateString() === tomorrow.toDateString()
+        ? 'Tomorrow'
+        : date.toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' })
+  return `${day}, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+}
+
+/** Pickup handoff steps derived from the donation's real status. */
+function pickupStepsFor(status: string): Array<{ label: string; done: boolean }> {
+  return [
+    { label: 'Scheduled', done: true },
+    { label: 'Picked up', done: status === 'PICKED_UP' || status === 'DELIVERED' },
+    { label: 'Delivered', done: status === 'DELIVERED' },
+  ]
+}
+
+/** The donor's next scheduled pickup among their live listings, if any. */
+function pickNextPickup(donations: DonationListItem[]): DonationListItem | null {
+  const now = Date.now()
+  const upcoming = donations
+    .filter(
+      (d) =>
+        d.pickupTime &&
+        ['AVAILABLE', 'RESERVED', 'PICKED_UP'].includes(d.status) &&
+        new Date(d.pickupTime).getTime() >= now - 3_600_000, // allow a pickup that started within the last hour
+    )
+    .sort((a, b) => new Date(a.pickupTime!).getTime() - new Date(b.pickupTime!).getTime())
+  return upcoming[0] ?? null
+}
+
+/** Insights computed from the donor's real analytics + AI freshness predictions. */
+function buildInsights(analytics: DonorAnalytics | null, donations: DonationListItem[]): Insight[] {
+  const insights: Insight[] = []
+  const summary = analytics?.summary
+
+  if (summary && summary.totalDonations > 0) {
+    insights.push({
+      icon: Recycle,
+      title: 'Your impact',
+      text: `You've listed ${summary.totalDonations} donations saving ${Math.round(summary.foodSavedKg)} kg — enough for about ${summary.peopleServed} meals.`,
+      tone: 'bg-emerald-50 text-emerald-600',
+    })
+  }
+
+  const urgent = donations.find((d) => d.status === 'AVAILABLE' && (d.predictions?.[0]?.priority ?? 0) >= 4)
+  if (urgent) {
+    insights.push({
+      icon: Zap,
+      title: 'Needs urgent rescue',
+      text: `${urgent.foodName} is high-priority — rescue volunteers are being alerted so it gets claimed before it expires.`,
+      tone: 'bg-amber-50 text-amber-600',
+    })
+  }
+
+  const categories = analytics?.byCategory ?? []
+  if (categories.length > 0) {
+    const top = [...categories].sort((a, b) => b.listed - a.listed)[0]
+    insights.push({
+      icon: TrendingUp,
+      title: 'Top category',
+      text: `${top.category} is your most-listed category — a standing pickup window for it could streamline matching.`,
+      tone: 'bg-brand-50 text-brand-600',
+    })
+  }
+
+  return insights
+}
+
 export default function DonorDashboardPage() {
   const { user } = useAuth()
-  const { toast } = useToast()
   const navigate = useNavigate()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [read, setRead] = useState<Set<string>>(new Set())
   const [activeDeliveries, setActiveDeliveries] = useState<ActiveDelivery[]>([])
   const [analytics, setAnalytics] = useState<DonorAnalytics | null>(null)
   const [recentDonations, setRecentDonations] = useState<DonationListItem[]>([])
   const [donationsLoaded, setDonationsLoaded] = useState(false)
+  const [nextPickup, setNextPickup] = useState<{ donation: DonationListItem; detail: DonationDetail | null } | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
-      const [{ user: me }, { deliveries }, analytics, donationsPage] = await Promise.all([
+      const [{ user: me }, { deliveries }, analyticsData, donationsPage] = await Promise.all([
         fetchMe(),
         fetchActiveDeliveries().catch(() => ({ deliveries: [] })),
         fetchDonorAnalytics().catch(() => null),
-        fetchDonations({ limit: 5 }).catch(() => null),
+        // Fetch a wider set so the upcoming-pickup scan can't miss a scheduled
+        // window on an older listing; the table still shows only the latest 5.
+        fetchDonations({ limit: 50 }).catch(() => null),
       ])
       setProfile(me)
       setActiveDeliveries(deliveries)
-      setAnalytics(analytics)
-      setRecentDonations(donationsPage?.donations ?? [])
+      setAnalytics(analyticsData)
+      const donations = donationsPage?.donations ?? []
+      setRecentDonations(donations.slice(0, 5))
       setDonationsLoaded(donationsPage !== null)
+
+      // Next scheduled pickup — from the donor's real listings, enriched with
+      // the accepted NGO and assigned volunteer via the detail endpoint.
+      const pickup = pickNextPickup(donations)
+      if (pickup) {
+        try {
+          const { donation } = await fetchDonation(pickup.id)
+          setNextPickup({ donation: pickup, detail: donation })
+        } catch {
+          setNextPickup({ donation: pickup, detail: null })
+        }
+      } else {
+        setNextPickup(null)
+      }
     } catch (err) {
+      // Silent refreshes keep the current view — the page already rendered once.
+      if (opts?.silent) return
       setError(
         (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
           'Failed to load your dashboard',
@@ -197,18 +240,11 @@ export default function DonorDashboardPage() {
     load()
   }, [load])
 
-  const markRead = (id: string) => {
-    setRead((prev) => {
-      const next = new Set(prev)
-      next.add(id)
-      return next
-    })
-  }
-
-  const markAllRead = () => {
-    setRead(new Set(initialNotifications.map((n) => n.id)))
-    toast({ variant: 'info', title: 'All caught up', description: 'Notifications marked as read.' })
-  }
+  // Realtime: refresh dashboard data every minute so statuses/KPIs stay current.
+  useEffect(() => {
+    const id = setInterval(() => void load({ silent: true }), 60_000)
+    return () => clearInterval(id)
+  }, [load])
 
   // Phase 30, Step 77 — live analytics (falls back to empty series).
   const monthlyKg = (analytics?.byMonth ?? []).map((point) => ({ month: monthShort(point.month), kg: point.kg }))
@@ -261,6 +297,12 @@ export default function DonorDashboardPage() {
     : []
 
   const firstName = profile?.fullName?.split(' ')[0] ?? user?.user_metadata?.full_name?.split(' ')[0] ?? 'there'
+  const insights = buildInsights(analytics, recentDonations)
+  const pickupSteps = nextPickup ? pickupStepsFor(nextPickup.donation.status) : []
+  const acceptedNgo = nextPickup?.detail?.requests?.find((r) => r.status === 'ACCEPTED')?.ngo?.ngoName
+  const pickupVolunteer = nextPickup?.detail?.assignments?.find(
+    (a) => a.status === 'ACCEPTED' || a.status === 'IN_TRANSIT',
+  )?.volunteer?.user?.fullName
 
   return (
     <DashboardShell roleLabel="Donor" nav={donorNav} title="Donor dashboard" subtitle="Your food rescue at a glance">
@@ -361,68 +403,93 @@ export default function DonorDashboardPage() {
                   </CardContent>
                 </Card>
 
-                {/* Upcoming pickup */}
+                {/* Upcoming pickup — derived from the donor's live listings */}
                 <Card>
                   <CardHeader>
                     <div>
                       <CardTitle>Upcoming pickup</CardTitle>
                       <CardDescription>Your next scheduled handoff</CardDescription>
                     </div>
-                    <Badge variant="neutral">Preview data</Badge>
+                    {nextPickup && (
+                      <Badge variant="success" dot>
+                        Live
+                      </Badge>
+                    )}
                   </CardHeader>
                   <CardContent>
-                    <div className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
-                      <CalendarClock className="size-4 text-brand-600" />
-                      Tomorrow, 18:00 – 19:30
-                    </div>
-                    <div className="mt-4 space-y-3 text-sm">
-                      <p className="flex items-start gap-2.5 text-neutral-700">
-                        <MapPin className="mt-0.5 size-4 shrink-0 text-neutral-400" />
-                        <span>
-                          <span className="font-medium text-neutral-900">Green Bites Kitchen</span>
-                          <span className="block text-xs text-neutral-500">Pickup address on file</span>
-                        </span>
-                      </p>
-                      <p className="flex items-start gap-2.5 text-neutral-700">
-                        <Truck className="mt-0.5 size-4 shrink-0 text-neutral-400" />
-                        <span>
-                          <span className="font-medium text-neutral-900">Hope Shelter</span>
-                          <span className="block text-xs text-neutral-500">40 kg bakery · ~160 meals</span>
-                        </span>
-                      </p>
-                    </div>
-
-                    {/* Steps */}
-                    <div className="mt-5 flex items-center gap-1.5">
-                      {pickupSteps.map((step, i) => (
-                        <div key={step.label} className="flex flex-1 flex-col items-center gap-1.5">
-                          <span
-                            className={`flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ${
-                              step.done ? 'bg-brand-600 text-white' : 'bg-neutral-100 text-neutral-400'
-                            }`}
-                          >
-                            {i + 1}
-                          </span>
-                          <span className={`text-[11px] ${step.done ? 'text-brand-700' : 'text-neutral-400'}`}>
-                            {step.label}
-                          </span>
+                    {loading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-6 w-2/3" />
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-3/4" />
+                      </div>
+                    ) : !nextPickup ? (
+                      <EmptyState
+                        icon={CalendarClock}
+                        title="No upcoming pickup"
+                        description="When one of your listings has a pickup window coming up, it shows here with the time, food and handoff details."
+                        className="py-10"
+                      />
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                          <CalendarClock className="size-4 text-brand-600" />
+                          {formatPickupTime(nextPickup.donation.pickupTime!)}
                         </div>
-                      ))}
-                    </div>
+                        <div className="mt-4 space-y-3 text-sm">
+                          <p className="flex items-start gap-2.5 text-neutral-700">
+                            <UtensilsCrossed className="mt-0.5 size-4 shrink-0 text-neutral-400" />
+                            <span>
+                              <span className="font-medium text-neutral-900">{nextPickup.donation.foodName}</span>
+                              <span className="block text-xs text-neutral-500">
+                                {nextPickup.donation.quantity} {nextPickup.donation.unit} · {nextPickup.donation.category.name}
+                              </span>
+                            </span>
+                          </p>
+                          <p className="flex items-start gap-2.5 text-neutral-700">
+                            <MapPin className="mt-0.5 size-4 shrink-0 text-neutral-400" />
+                            <span>
+                              <span className="font-medium text-neutral-900">Pickup address</span>
+                              <span className="block text-xs text-neutral-500">{nextPickup.donation.pickupAddress}</span>
+                            </span>
+                          </p>
+                          {acceptedNgo && (
+                            <p className="flex items-start gap-2.5 text-neutral-700">
+                              <Truck className="mt-0.5 size-4 shrink-0 text-neutral-400" />
+                              <span>
+                                <span className="font-medium text-neutral-900">{acceptedNgo}</span>
+                                <span className="block text-xs text-neutral-500">Receiving NGO</span>
+                              </span>
+                            </p>
+                          )}
+                        </div>
 
-                    <p className="mt-4 flex items-center gap-1.5 text-xs text-neutral-500">
-                      <Clock className="size-3.5" />
-                      Volunteer Rohan assigned
-                    </p>
+                        {/* Steps — mapped from the donation's real status */}
+                        <div className="mt-5 flex items-center gap-1.5">
+                          {pickupSteps.map((step, i) => (
+                            <div key={step.label} className="flex flex-1 flex-col items-center gap-1.5">
+                              <span
+                                className={`flex size-6 items-center justify-center rounded-full text-[10px] font-semibold ${
+                                  step.done ? 'bg-brand-600 text-white' : 'bg-neutral-100 text-neutral-400'
+                                }`}
+                              >
+                                {step.done ? <CheckCircle2 className="size-3.5" /> : i + 1}
+                              </span>
+                              <span className={`text-[11px] ${step.done ? 'text-brand-700' : 'text-neutral-400'}`}>
+                                {step.label}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
 
-                    <div className="mt-4 flex gap-2">
-                      <Button variant="secondary" size="sm" className="flex-1" onClick={() => toast({ variant: 'info', title: 'Demo data', description: 'Live route view arrives with the tracking phase.' })}>
-                        View route
-                      </Button>
-                      <Button variant="ghost" size="sm" className="flex-1" onClick={() => toast({ variant: 'info', title: 'Demo data', description: 'Rescheduling arrives with the donation module.' })}>
-                        Reschedule
-                      </Button>
-                    </div>
+                        {pickupVolunteer && (
+                          <p className="mt-4 flex items-center gap-1.5 text-xs text-neutral-500">
+                            <Clock className="size-3.5" />
+                            Volunteer {pickupVolunteer} assigned
+                          </p>
+                        )}
+                      </>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -602,59 +669,8 @@ export default function DonorDashboardPage() {
                   </CardContent>
                 </Card>
 
-                {/* Notifications */}
-                <Card>
-                  <CardHeader>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <CardTitle>Notifications</CardTitle>
-                        <Badge variant="neutral">Preview data</Badge>
-                      </div>
-                      <CardDescription>Sample activity — live notifications arrive in a later phase</CardDescription>
-                    </div>
-                    <Button variant="ghost" size="sm" onClick={markAllRead}>
-                      Mark all read
-                    </Button>
-                  </CardHeader>
-                  <CardContent>
-                    <ul className="space-y-1">
-                      {initialNotifications.map((notification) => {
-                        const isRead = read.has(notification.id)
-                        const { icon: Icon, classes } = notificationStyle[notification.kind]
-                        return (
-                          <li key={notification.id}>
-                            <button
-                              type="button"
-                              onClick={() => markRead(notification.id)}
-                              aria-label={`${notification.title}${isRead ? '' : ' — unread'}`}
-                              className="flex w-full items-start gap-3 rounded-xl p-2 text-left transition hover:bg-neutral-50"
-                            >
-                              <span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg ${classes}`}>
-                                <Icon className="size-4" />
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="flex items-center gap-2">
-                                  <span
-                                    className={`truncate text-sm font-medium ${isRead ? 'text-neutral-500' : 'text-neutral-900'}`}
-                                  >
-                                    {notification.title}
-                                  </span>
-                                  {!isRead && <span className="size-1.5 shrink-0 rounded-full bg-brand-500" />}
-                                </span>
-                                <span
-                                  className={`mt-0.5 block text-xs leading-relaxed ${isRead ? 'text-neutral-400' : 'text-neutral-500'}`}
-                                >
-                                  {notification.message}
-                                </span>
-                                <span className="mt-0.5 block text-[11px] text-neutral-400">{notification.time}</span>
-                              </span>
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  </CardContent>
-                </Card>
+                {/* Notifications — real API + live socket pushes */}
+                <NotificationsCard />
               </div>
 
               {/* Phase 28, Step 73 — Live tracking */}
@@ -692,7 +708,7 @@ export default function DonorDashboardPage() {
                 </Card>
               )}
 
-              {/* AI insights */}
+              {/* AI insights — computed from live analytics + freshness predictions */}
               <Card>
                 <CardHeader>
                   <div>
@@ -700,25 +716,40 @@ export default function DonorDashboardPage() {
                       <Sparkles className="size-4 text-brand-600" />
                       <CardTitle>AI insights</CardTitle>
                     </div>
-                    <CardDescription>Personalized suggestions from Ecoserve AI</CardDescription>
+                    <CardDescription>Generated from your live donation data and AI freshness scores</CardDescription>
                   </div>
                   <Badge variant="brand">Powered by AI</Badge>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid gap-4 md:grid-cols-3">
-                    {insights.map((insight) => (
-                      <div
-                        key={insight.title}
-                        className="rounded-xl border border-neutral-100 bg-neutral-50 p-4 transition duration-300 hover:-translate-y-0.5 hover:border-brand-200 hover:bg-white hover:shadow-sm"
-                      >
-                        <span className={`flex size-9 items-center justify-center rounded-lg ${insight.tone}`}>
-                          <insight.icon className="size-4.5" />
-                        </span>
-                        <p className="mt-3 text-sm font-semibold text-neutral-900">{insight.title}</p>
-                        <p className="mt-1 text-xs leading-relaxed text-neutral-600">{insight.text}</p>
-                      </div>
-                    ))}
-                  </div>
+                  {loading ? (
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <Skeleton className="h-28 rounded-xl" />
+                      <Skeleton className="h-28 rounded-xl" />
+                      <Skeleton className="h-28 rounded-xl" />
+                    </div>
+                  ) : insights.length === 0 ? (
+                    <EmptyState
+                      icon={Sparkles}
+                      title="No insights yet"
+                      description="Once you list donations, your impact, urgency alerts and category trends will appear here."
+                      className="py-10"
+                    />
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-3">
+                      {insights.map((insight) => (
+                        <div
+                          key={insight.title}
+                          className="rounded-xl border border-neutral-100 bg-neutral-50 p-4 transition duration-300 hover:-translate-y-0.5 hover:border-brand-200 hover:bg-white hover:shadow-sm"
+                        >
+                          <span className={`flex size-9 items-center justify-center rounded-lg ${insight.tone}`}>
+                            <insight.icon className="size-4.5" />
+                          </span>
+                          <p className="mt-3 text-sm font-semibold text-neutral-900">{insight.title}</p>
+                          <p className="mt-1 text-xs leading-relaxed text-neutral-600">{insight.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 

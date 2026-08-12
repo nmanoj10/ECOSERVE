@@ -410,6 +410,21 @@ model Analytics {
   @@map("analytics")
 }
 
+/// Registration form submitted before email confirmation. The confirmation
+/// link lands the user back in the app, where this row completes the profile
+/// automatically — even when the link is opened in a different browser/device
+/// (where localStorage is unavailable). Consumed once registration finishes.
+model PendingRegistration {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  payload   Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("pending_registrations")
+}
+
 /// Server-side session tracking (refresh token hash). Supabase Auth manages
 /// its own sessions; this table supports custom refresh flows if needed.
 model Session {

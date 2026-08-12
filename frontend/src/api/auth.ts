@@ -49,6 +49,37 @@ export async function registerUser(payload: RegisterPayload): Promise<RegisterRe
   return data
 }
 
+/**
+ * Saves the registration form server-side before email confirmation, so the
+ * confirmation-link landing can complete the profile even when the link is
+ * opened in a different browser or device (where localStorage is empty).
+ * Best-effort: returns null when the backend is unreachable (the caller falls
+ * back to the localStorage copy for the same-browser round trip).
+ */
+export async function savePendingRegistration(
+  email: string,
+  payload: RegisterPayload,
+): Promise<{ id: string } | null> {
+  try {
+    const res = await api.post<{ registration: { id: string } }>('/v1/auth/pending-registrations', { email, payload })
+    return res?.data?.registration ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Fetches the authenticated user's saved registration form (if any). */
+export async function getPendingRegistration(): Promise<{ email: string; payload: RegisterPayload } | null> {
+  try {
+    const res = await api.get<{ registration: { email: string; payload: RegisterPayload } | null }>(
+      '/v1/auth/pending-registrations/current',
+    )
+    return res?.data?.registration ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Fetches the authenticated user with their role profile. */
 export async function fetchMe(): Promise<RegisterResponse> {
   const { data } = await api.get<RegisterResponse>('/v1/auth/me')

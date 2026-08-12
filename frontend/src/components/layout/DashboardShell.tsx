@@ -27,7 +27,8 @@ export interface DashboardNavItem {
   end?: boolean
 }
 
-function timeAgo(iso: string): string {
+/** Relative time label shared by the bell dropdown and dashboard pages. */
+export function timeAgo(iso: string): string {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
   if (seconds < 60) return 'just now'
   const minutes = Math.floor(seconds / 60)

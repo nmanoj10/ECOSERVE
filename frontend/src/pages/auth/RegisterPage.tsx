@@ -10,7 +10,12 @@ import RegisterMockup from '@/components/layout/RegisterMockup'
 import { useGeolocation } from '@/hooks/useGeolocation'
 import type { GeoCoords } from '@/hooks/useGeolocation'
 import { useReverseGeocode } from '@/hooks/useReverseGeocode'
-import { registerUser, type RegisterPayload } from '@/api/auth'
+import {
+  getPendingRegistration,
+  registerUser,
+  savePendingRegistration,
+  type RegisterPayload,
+} from '@/api/auth'
 import { registerFormSchema, type RegisterFormValues } from '@/schemas/register'
 import { supabase } from '@/services/supabase'
 import { roleDashboardPath } from '@/utils/auth'
@@ -119,29 +124,24 @@ export default function RegisterPage() {
    * Email-confirmation round trip: the user clicks the link from Supabase,
    * returns to /register with a fresh session, and we finish creating their
    * platform user + role profile automatically using the form they filled in.
+   * The form is kept in localStorage (same browser) AND on the server (any
+   * browser/device), so no matter where the confirmation link is opened the
+   * user lands straight on their role dashboard without re-typing anything.
    */
   useEffect(() => {
     let active = true
+    let done = false
 
-    const pending = localStorage.getItem(PENDING_REGISTRATION_KEY)
-    if (!pending) return
-
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!active || !data.session) return
-
-      const { email, payload } = JSON.parse(pending) as {
-        email: string
-        payload: RegisterPayload
-      }
-      // Only auto-complete when the confirmed account matches the signup email.
-      if (email.toLowerCase() !== (data.session.user.email ?? '').toLowerCase()) return
-
+    const finishRegistration = async (payload: RegisterPayload): Promise<void> => {
+      if (done) return
+      done = true
       localStorage.removeItem(PENDING_REGISTRATION_KEY)
       setSubmitting(true)
       try {
         await registerUser(payload)
         if (active) navigate(roleDashboardPath[payload.role], { replace: true })
       } catch (err) {
+        done = false
         if (active) {
           setSubmitting(false)
           setError(
@@ -150,10 +150,55 @@ export default function RegisterPage() {
           )
         }
       }
+    }
+
+    const tryFinish = async (): Promise<void> => {
+      if (done) return
+
+      // 1) Same-browser round trip — the form saved to localStorage at signup.
+      let local: { email: string; payload: RegisterPayload } | null = null
+      const pending = localStorage.getItem(PENDING_REGISTRATION_KEY)
+      if (pending) {
+        try {
+          local = JSON.parse(pending) as { email: string; payload: RegisterPayload }
+        } catch {
+          localStorage.removeItem(PENDING_REGISTRATION_KEY)
+        }
+      }
+
+      const { data } = await supabase.auth.getSession()
+      if (!active || done || !data.session) return
+      const sessionEmail = (data.session.user.email ?? '').toLowerCase()
+
+      // Only auto-complete when the confirmed account matches the signup email.
+      if (local && local.email.toLowerCase() === sessionEmail) {
+        await finishRegistration(local.payload)
+        return
+      }
+
+      // 2) Cross-device round trip — the link may have been opened in a
+      //    different browser where localStorage is empty. Pull the form the
+      //    server saved at signup instead.
+      const saved = await getPendingRegistration()
+      if (!active || done) return
+      if (saved && saved.email.toLowerCase() === sessionEmail) {
+        await finishRegistration(saved.payload)
+      }
+    }
+
+    void tryFinish()
+
+    // The confirmation redirect may still be exchanging its auth code when the
+    // page mounts — if the first check found no session yet, finish the moment
+    // Supabase signs the user in.
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active || done) return
+      if (event === 'SIGNED_IN' && session) void tryFinish()
     })
 
     return () => {
       active = false
+      listener.subscription.unsubscribe()
     }
     // Run once on mount — the confirmation link always lands here fresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,10 +229,12 @@ export default function RegisterPage() {
       if (!data.session) {
         // Email confirmation is on — remember the form so the confirmation link
         // can finish registration automatically (see the mount effect above).
-        localStorage.setItem(
-          PENDING_REGISTRATION_KEY,
-          JSON.stringify({ email: values.email, payload: buildPayload(values) }),
-        )
+        // The server copy covers the case where the link is opened in a
+        // different browser or device (localStorage wouldn't be there); it's
+        // best-effort, so don't block the confirmation notice on it.
+        const payload = buildPayload(values)
+        localStorage.setItem(PENDING_REGISTRATION_KEY, JSON.stringify({ email: values.email, payload }))
+        void savePendingRegistration(values.email, payload)
         setSubmitting(false)
         setNotice(
           `We sent a confirmation link to ${values.email}. Click it and we'll finish setting up your ${values.role.toLowerCase()} profile automatically.`,

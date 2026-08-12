@@ -26,6 +26,8 @@ vi.mock('@/api/auth', () => ({
   registerSession: vi.fn(),
   logout: vi.fn(),
   fetchMe: vi.fn(),
+  savePendingRegistration: vi.fn(),
+  getPendingRegistration: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({

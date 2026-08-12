@@ -18,6 +18,7 @@ import {
 } from '@/api/ngo'
 import { CountUp } from '@/components/home/CountUp'
 import DashboardShell from '@/components/layout/DashboardShell'
+import NotificationsCard from '@/components/notifications/NotificationsCard'
 import { LiveTrackingMap } from '@/components/maps/LiveTrackingMap'
 import { NearbyMap, type NearbyMapDonation } from '@/components/maps/NearbyMap'
 import { Badge } from '@/components/ui/Badge'
@@ -142,9 +143,12 @@ export default function NgoDashboardPage() {
   const [analytics, setAnalytics] = useState<NgoAnalytics | null>(null)
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
-    // Silent refreshes (after an accept) skip the skeleton flash.
-    if (!opts?.silent) setLoading(true)
-    setError(null)
+    // Silent refreshes (after an accept or the periodic sweep) skip the
+    // skeleton flash and never blank out a real error state.
+    if (!opts?.silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const { user: me } = await fetchMe()
       setProfile(me)
@@ -188,6 +192,12 @@ export default function NgoDashboardPage() {
 
   useEffect(() => {
     load()
+  }, [load])
+
+  // Realtime: refresh dashboard data every minute so statuses/KPIs stay current.
+  useEffect(() => {
+    const id = setInterval(() => void load({ silent: true }), 60_000)
+    return () => clearInterval(id)
   }, [load])
 
   /** Step 55 — one-step claim from the dashboard. */
@@ -559,66 +569,70 @@ export default function NgoDashboardPage() {
             </Card>
           </div>
 
-          {/* Step 53 — Requests */}
-          <Card className="mt-6">
-            <CardHeader>
-              <div>
-                <CardTitle>Requests</CardTitle>
-                <CardDescription>Food you&apos;ve claimed and its current status</CardDescription>
-              </div>
-              <Badge variant="brand">{requests.length}</Badge>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-10 w-full" />
-                  <Skeleton className="h-10 w-full" />
+          {/* Step 53 — Requests + Notifications */}
+          <div className="mt-6 grid gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <div>
+                  <CardTitle>Requests</CardTitle>
+                  <CardDescription>Food you&apos;ve claimed and its current status</CardDescription>
                 </div>
-              ) : requests.length === 0 ? (
-                <EmptyState
-                  icon={HandHeart}
-                  title="No requests yet"
-                  description="Accept a nearby donation and it will show up here with its pickup details."
-                />
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Food</TableHead>
-                      <TableHead>Donor</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Quantity</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Requested</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {requests.map((request) => {
-                      const statusBadge = requestStatus(request.status)
-                      return (
-                        <TableRow key={request.id}>
-                          <TableCell className="font-medium text-neutral-900">{request.donation.foodName}</TableCell>
-                          <TableCell>{request.donation.donor.organizationName}</TableCell>
-                          <TableCell>{request.donation.category.name}</TableCell>
-                          <TableCell>
-                            {request.donation.quantity} {request.donation.unit}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={statusBadge.variant} dot>
-                              {statusBadge.label}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right text-neutral-500">
-                            {new Date(request.requestedAt).toLocaleDateString()}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+                <Badge variant="brand">{requests.length}</Badge>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                ) : requests.length === 0 ? (
+                  <EmptyState
+                    icon={HandHeart}
+                    title="No requests yet"
+                    description="Accept a nearby donation and it will show up here with its pickup details."
+                  />
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Food</TableHead>
+                        <TableHead>Donor</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Requested</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {requests.map((request) => {
+                        const statusBadge = requestStatus(request.status)
+                        return (
+                          <TableRow key={request.id}>
+                            <TableCell className="font-medium text-neutral-900">{request.donation.foodName}</TableCell>
+                            <TableCell>{request.donation.donor.organizationName}</TableCell>
+                            <TableCell>{request.donation.category.name}</TableCell>
+                            <TableCell>
+                              {request.donation.quantity} {request.donation.unit}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={statusBadge.variant} dot>
+                                {statusBadge.label}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right text-neutral-500">
+                              {new Date(request.requestedAt).toLocaleDateString()}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            <NotificationsCard />
+          </div>
 
           {/* Phase 28, Step 74 — Live tracking */}
           {activeDeliveries.length > 0 && (
