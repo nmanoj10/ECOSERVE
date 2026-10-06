@@ -1,6 +1,7 @@
 import { BellRing, Clock, MapPin, Navigation, Radio, Truck } from 'lucide-react'
 import { useRef } from 'react'
 
+import { Eyebrow } from '@/components/home/Eyebrow'
 import { Reveal } from '@/components/home/Reveal'
 import { gsap, useGSAP } from '@/utils/gsap'
 
@@ -93,13 +94,13 @@ export default function LiveTracking() {
   )
 
   return (
-    <section ref={sectionRef} id="live" className="scroll-mt-24 bg-neutral-50 py-24 sm:py-32">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <section ref={sectionRef} id="live" className="scroll-mt-24 bg-white py-24 sm:py-32">
+      <div className="mx-auto max-w-7xl px-6 sm:px-8 lg:px-10">
         <div className="grid items-start gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:gap-16">
           {/* Copy + feed */}
           <div>
             <Reveal>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-600">Live tracking</p>
+              <Eyebrow>Live tracking</Eyebrow>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-neutral-900 sm:text-4xl">
                 Every plate, mapped in real time.
               </h2>
@@ -113,7 +114,7 @@ export default function LiveTracking() {
               {bullets.map((bullet, i) => (
                 <Reveal key={bullet.title} delay={0.1 + i * 0.08}>
                   <div className="flex gap-4">
-                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 ring-1 ring-inset ring-brand-100">
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 transition duration-300 group-hover:bg-brand-500 group-hover:text-white">
                       <bullet.icon className="size-5" />
                     </span>
                     <div>
@@ -128,10 +129,7 @@ export default function LiveTracking() {
             <Reveal delay={0.2} className="mt-8">
               <div className="space-y-2.5">
                 {feed.map((item) => (
-                  <div
-                    key={item.route}
-                    className="flex items-center gap-3 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"
-                  >
+                  <div key={item.route} className="group flex items-center gap-3 rounded-2xl border border-neutral-200 bg-canvas p-4 transition duration-300 hover:border-brand-200">
                     <span
                       className={`size-2 shrink-0 rounded-full ${
                         item.note.startsWith('Delivered') ? 'bg-neutral-300' : 'animate-pulse bg-brand-500'
@@ -152,7 +150,7 @@ export default function LiveTracking() {
           <Reveal delay={0.1}>
             <div
               ref={mapRef}
-              className="relative overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_24px_48px_-24px_rgba(0,0,0,0.18)]"
+              className="relative overflow-hidden rounded-3xl border border-neutral-200 bg-white"
             >
               <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4">
                 <div className="flex items-center gap-2">
@@ -214,7 +212,7 @@ export default function LiveTracking() {
                 </div>
 
                 {/* Status card */}
-                <div className="absolute inset-x-4 bottom-4 rounded-2xl border border-neutral-200/80 bg-white/90 p-4 shadow-lg backdrop-blur">
+                <div className="absolute inset-x-4 bottom-4 rounded-2xl border border-neutral-200 bg-white p-4">
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-neutral-900">
@@ -224,13 +222,13 @@ export default function LiveTracking() {
                         <Radio className="size-3.5 text-brand-600" /> ETA 12 min · Live
                       </p>
                     </div>
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-500 text-white">
                       <Truck className="size-4.5" />
                     </span>
                   </div>
                   <div className="mt-3 flex items-center gap-2 text-[11px] font-medium">
                     <span className="rounded-full bg-brand-50 px-2.5 py-1 text-brand-700">Picked up</span>
-                    <span className="rounded-full bg-brand-600 px-2.5 py-1 text-white">In transit</span>
+                    <span className="rounded-full bg-brand-500 px-2.5 py-1 text-white">In transit</span>
                     <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-neutral-500">Delivered</span>
                   </div>
                 </div>

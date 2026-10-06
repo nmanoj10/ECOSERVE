@@ -12,7 +12,7 @@ import Solution from '@/components/home/Solution'
 
 export default function HomePage() {
   return (
-    <div className="min-h-screen bg-white text-neutral-900">
+    <div className="min-h-screen bg-canvas text-neutral-900">
       <Navbar />
       <main>
         <Hero />

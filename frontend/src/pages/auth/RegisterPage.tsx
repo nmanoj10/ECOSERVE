@@ -1,24 +1,64 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft, Bike, Eye, EyeOff, HandHeart, Loader2, MapPin, Store } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { ArrowLeft, Bike, Eye, EyeOff, HandHeart, Store } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router-dom'
+import { z } from 'zod'
 
 import AuthLayout from '@/components/layout/AuthLayout'
-import RegisterMockup from '@/components/layout/RegisterMockup'
-import { useGeolocation } from '@/hooks/useGeolocation'
-import type { GeoCoords } from '@/hooks/useGeolocation'
-import { useReverseGeocode } from '@/hooks/useReverseGeocode'
+import RegisterImagePanel from '@/components/layout/RegisterImagePanel'
+
+import createAccImage from '@/assets/create-acc.webp'
+
+import { signup, getCurrentUser, setTokens, getAccessToken } from '@/services/local-auth'
+import { roleDashboardPath } from '@/utils/auth'
 import {
-  createConfirmedAuthUser,
-  getPendingRegistration,
   registerUser,
+  getPendingRegistration,
   type RegisterPayload,
 } from '@/api/auth'
-import { registerFormSchema, type RegisterFormValues } from '@/schemas/register'
-import { supabase } from '@/services/supabase'
-import { roleDashboardPath } from '@/utils/auth'
+
+/** Zod schema for the registration form. */
+const registerFormSchema = z.object({
+  role: z.enum(['DONOR', 'NGO', 'VOLUNTEER']),
+  fullName: z.string().min(2, 'Enter your full name'),
+  email: z.string().email('Enter a valid email'),
+  phone: z.string().optional(),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  confirmPassword: z.string().min(8, 'Confirm your password'),
+  donor: z
+    .object({
+      organizationName: z.string().min(2, 'Enter organization name'),
+      organizationType: z.string().min(2, 'Enter organization type'),
+      address: z.string().min(5, 'Enter address'),
+      city: z.string().min(2, 'Enter city'),
+      state: z.string().min(2, 'Enter state'),
+    })
+    .optional(),
+  ngo: z
+    .object({
+      ngoName: z.string().min(2, 'Enter NGO name'),
+      registrationNumber: z.string().min(2, 'Enter registration number'),
+      address: z.string().min(5, 'Enter address'),
+      city: z.string().min(2, 'Enter city'),
+      state: z.string().min(2, 'Enter state'),
+      description: z.string().optional(),
+    })
+    .optional(),
+  volunteer: z
+    .object({
+      vehicleType: z.string().optional(),
+      vehicleNumber: z.string().optional(),
+    })
+    .optional(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: 'Passwords do not match',
+  path: ['confirmPassword'],
+})
+
+/** Type inferred from the registration schema. */
+type RegisterFormValues = z.infer<typeof registerFormSchema>
 
 /**
  * Holds the form values across the email-confirmation round trip. The
@@ -73,7 +113,6 @@ export default function RegisterPage() {
     register,
     handleSubmit,
     watch,
-    setValue,
     formState: { errors },
   } = useForm<RegisterFormValues>({
     resolver: zodResolver(registerFormSchema),
@@ -83,49 +122,11 @@ export default function RegisterPage() {
 
   const role = watch('role')
 
-  // Auto-fill the address (DONOR / NGO) from the user's current location.
-  const { coords, error: geoError, loading: locating, supported, locate } = useGeolocation()
-  const { loading: resolving, error: reverseError, lookup } = useReverseGeocode()
-  const autoFillRoles = useRef(new Set<string>())
-
-  const fillAddressFromCoords = useCallback(
-    async (c: GeoCoords) => {
-      if (role !== 'DONOR' && role !== 'NGO') return
-      const place = await lookup(c.latitude, c.longitude)
-      if (!place) return
-      if (role === 'DONOR') {
-        if (place.address) setValue('donor.address', place.address, { shouldDirty: true })
-        setValue('donor.city', place.city, { shouldDirty: true })
-        setValue('donor.state', place.state, { shouldDirty: true })
-      } else {
-        if (place.address) setValue('ngo.address', place.address, { shouldDirty: true })
-        setValue('ngo.city', place.city, { shouldDirty: true })
-        setValue('ngo.state', place.state, { shouldDirty: true })
-      }
-    },
-    [lookup, role, setValue],
-  )
-
-  // Request the location the first time an address-bearing section appears, so
-  // the address fills in automatically (the button below covers retries).
-  useEffect(() => {
-    if ((role === 'DONOR' || role === 'NGO') && supported && !autoFillRoles.current.has(role)) {
-      autoFillRoles.current.add(role)
-      locate()
-    }
-  }, [role, supported, locate])
-
-  useEffect(() => {
-    if (coords) void fillAddressFromCoords(coords)
-  }, [coords, fillAddressFromCoords])
-
-  /**
-   * Email-confirmation round trip: the user clicks the link from Supabase,
-   * returns to /register with a fresh session, and we finish creating their
-   * platform user + role profile automatically using the form they filled in.
-   * The form is kept in localStorage (same browser) AND on the server (any
-   * browser/device), so no matter where the confirmation link is opened the
-   * user lands straight on their role dashboard without re-typing anything.
+  /** Email-confirmation round trip: the user clicks the link, returns to /register,
+   * and we finish creating their platform user + role profile automatically using
+   * the form they filled in. The form is kept in localStorage (same browser) AND
+   * on the server (any browser/device), so no matter where the confirmation link is
+   * opened the user lands straight on their role dashboard without re-typing anything.
    */
   useEffect(() => {
     let active = true
@@ -144,8 +145,7 @@ export default function RegisterPage() {
         if (active) {
           setSubmitting(false)
           setError(
-            (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
-              'Registration failed',
+            (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? 'Registration failed'
           )
         }
       }
@@ -155,50 +155,32 @@ export default function RegisterPage() {
       if (done) return
 
       // 1) Same-browser round trip — the form saved to localStorage at signup.
-      let local: { email: string; payload: RegisterPayload } | null = null
       const pending = localStorage.getItem(PENDING_REGISTRATION_KEY)
       if (pending) {
         try {
-          local = JSON.parse(pending) as { email: string; payload: RegisterPayload }
+          const local = JSON.parse(pending) as { email: string; payload: RegisterPayload }
+          if (active && !done) {
+            await finishRegistration(local.payload)
+          }
+          return
         } catch {
           localStorage.removeItem(PENDING_REGISTRATION_KEY)
         }
       }
 
-      const { data } = await supabase.auth.getSession()
-      if (!active || done || !data.session) return
-      const sessionEmail = (data.session.user.email ?? '').toLowerCase()
-
-      // Only auto-complete when the confirmed account matches the signup email.
-      if (local && local.email.toLowerCase() === sessionEmail) {
-        await finishRegistration(local.payload)
-        return
-      }
-
       // 2) Cross-device round trip — the link may have been opened in a
       //    different browser where localStorage is empty. Pull the form the
-      //    server saved at signup instead.
-      const saved = await getPendingRegistration()
+      //    server saved at signup instead. Skip the call when there's no
+      //    session yet (first visit to /register) — it would just 401.
+      const saved = getAccessToken() ? await getPendingRegistration() : null
       if (!active || done) return
-      if (saved && saved.email.toLowerCase() === sessionEmail) {
+      if (saved) {
         await finishRegistration(saved.payload)
       }
     }
 
     void tryFinish()
 
-    // The confirmation redirect may still be exchanging its auth code when the
-    // page mounts — if the first check found no session yet, finish the moment
-    // Supabase signs the user in.
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!active || done) return
-      if (event === 'SIGNED_IN' && session) void tryFinish()
-    })
-
-    return () => {
-      active = false
-      listener.subscription.unsubscribe()
-    }
     // Run once on mount — the confirmation link always lands here fresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -207,38 +189,44 @@ export default function RegisterPage() {
     setSubmitting(true)
     setError(null)
 
-    // If the user already has a session (e.g. they were redirected here from
-    // login), skip signUp and finish registration directly.
-    const { data: sessionData } = await supabase.auth.getSession()
-
-    if (!sessionData.session) {
-      // Create the account pre-confirmed via the backend Admin API. No email is
-      // ever sent, so signup is instant and the free-plan email quota is never
-      // touched — this works whether or not Supabase's "Confirm email" toggle
-      // is on. Then sign in with the password directly; no confirmation step.
+    // Check if there's an existing session (e.g. they were redirected here from login).
+    // Skip the network call when no token is stored — during a fresh signup
+    // there is nothing to restore and the request would only 401.
+    const existingUser = getAccessToken() ? await getCurrentUser() : null
+    if (existingUser) {
+      // Already logged in — just finish profile registration
       try {
-        await createConfirmedAuthUser(values.email, values.password)
+        await registerUser(buildPayload(values))
+        localStorage.removeItem(PENDING_REGISTRATION_KEY)
+        setSubmitting(false)
+        navigate(roleDashboardPath[values.role], { replace: true })
       } catch (err) {
         setSubmitting(false)
         setError(
-          (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
-            'Could not create account',
+          (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? 'Registration failed'
         )
-        return
       }
-
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: values.email,
-        password: values.password,
-      })
-      if (signInError) {
-        setSubmitting(false)
-        setError(signInError.message)
-        return
-      }
+      return
     }
 
-    // We have a session (fresh or existing) — create the platform user + profile.
+    // Create the account pre-confirmed via the backend.
+    // No email is ever sent, so signup is instant and the free-plan email quota is never touched.
+    // `signup()` auto-signs-in with the caller-chosen password and returns a
+    // token pair — store it so the POST /auth/register below is authenticated.
+    try {
+      const { tokens } = await signup(values.email, values.password)
+      setTokens(tokens)
+    } catch (err) {
+      setSubmitting(false)
+      setError(
+        (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
+          (err instanceof Error ? err.message : undefined) ??
+          'Could not create account',
+      )
+      return
+    }
+
+    // We have a session (just created) — create the platform user + profile.
     try {
       await registerUser(buildPayload(values))
       localStorage.removeItem(PENDING_REGISTRATION_KEY)
@@ -247,7 +235,7 @@ export default function RegisterPage() {
     } catch (err) {
       setSubmitting(false)
       setError(
-        (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? 'Registration failed',
+        (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ?? 'Registration failed'
       )
     }
   }
@@ -256,7 +244,8 @@ export default function RegisterPage() {
     <AuthLayout
       title="Join Ecoserve"
       subtitle="Create your account as a donor, NGO, or volunteer"
-      panel={<RegisterMockup />}
+      panel={<RegisterImagePanel />}
+      image={createAccImage}
     >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
         {/* Registering as */}
@@ -268,18 +257,10 @@ export default function RegisterPage() {
               return (
                 <label
                   key={r.value}
-                  className={`cursor-pointer rounded-xl border p-3 text-center transition ${
-                    selected
-                      ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-500/20'
-                      : 'border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'
-                  }`}
-                >
+                  className={`cursor-pointer rounded-xl border p-3 text-center transition ${selected ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-500/20' : 'border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'}`}>
                   <input type="radio" value={r.value} className="sr-only" {...register('role')} />
                   <span
-                    className={`mx-auto flex size-9 items-center justify-center rounded-lg transition ${
-                      selected ? 'bg-brand-600 text-white' : 'bg-neutral-100 text-neutral-500'
-                    }`}
-                  >
+                    className={`mx-auto flex size-9 items-center justify-center rounded-lg transition ${selected ? 'bg-brand-600 text-white' : 'bg-neutral-100 text-neutral-500'}`}>
                     <r.icon className="size-4.5" />
                   </span>
                   <span className={`mt-2 block text-xs font-semibold ${selected ? 'text-brand-800' : 'text-neutral-700'}`}>
@@ -295,35 +276,27 @@ export default function RegisterPage() {
         </div>
 
         <div>
-          <label htmlFor="fullName" className="mb-1.5 block text-sm font-medium text-neutral-700">
-            Full name
-          </label>
+          <label htmlFor="fullName" className="mb-1.5 block text-sm font-medium text-neutral-700">Full name</label>
           <input id="fullName" autoComplete="name" className={inputClass} placeholder="Your name" {...register('fullName')} />
           {errors.fullName && <p className="mt-1 text-xs text-red-600">{errors.fullName.message}</p>}
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-neutral-700">
-              Email
-            </label>
+            <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-neutral-700">Email</label>
             <input id="email" type="email" autoComplete="email" className={inputClass} placeholder="you@example.com" {...register('email')} />
             {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email.message}</p>}
           </div>
 
           <div>
-            <label htmlFor="phone" className="mb-1.5 block text-sm font-medium text-neutral-700">
-              Phone (optional)
-            </label>
+            <label htmlFor="phone" className="mb-1.5 block text-sm font-medium text-neutral-700">Phone (optional)</label>
             <input id="phone" type="tel" autoComplete="tel" className={inputClass} placeholder="+91 …" {...register('phone')} />
           </div>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-neutral-700">
-              Password
-            </label>
+            <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-neutral-700">Password</label>
             <div className="relative">
               <input
                 id="password"
@@ -347,9 +320,7 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label htmlFor="confirmPassword" className="mb-1.5 block text-sm font-medium text-neutral-700">
-              Confirm password
-            </label>
+            <label htmlFor="confirmPassword" className="mb-1.5 block text-sm font-medium text-neutral-700">Confirm password</label>
             <div className="relative">
               <input
                 id="confirmPassword"
@@ -375,12 +346,6 @@ export default function RegisterPage() {
 
         {role === 'DONOR' && (
           <div className="space-y-4 rounded-xl bg-neutral-50 p-4">
-            <LocationFillRow
-              title="Donor organization"
-              onClick={locate}
-              busy={locating || resolving}
-              error={geoError ?? reverseError}
-            />
             <Field label="Organization name" error={errors.donor?.organizationName?.message}>
               <input className={inputClass} placeholder="Green Kitchen" {...register('donor.organizationName')} />
             </Field>
@@ -403,12 +368,6 @@ export default function RegisterPage() {
 
         {role === 'NGO' && (
           <div className="space-y-4 rounded-xl bg-neutral-50 p-4">
-            <LocationFillRow
-              title="NGO details"
-              onClick={locate}
-              busy={locating || resolving}
-              error={geoError ?? reverseError}
-            />
             <Field label="NGO name" error={errors.ngo?.ngoName?.message}>
               <input className={inputClass} placeholder="Food Bank Foundation" {...register('ngo.ngoName')} />
             </Field>
@@ -463,9 +422,7 @@ export default function RegisterPage() {
 
       <p className="mt-6 text-center text-sm text-neutral-600">
         Already have an account?{' '}
-        <Link to="/login" className="font-medium text-brand-700 hover:underline">
-          Log in
-        </Link>
+        <Link to="/login" className="font-medium text-brand-700 hover:underline">Log in</Link>
       </p>
 
       <Link
@@ -476,36 +433,6 @@ export default function RegisterPage() {
         Back to home
       </Link>
     </AuthLayout>
-  )
-}
-
-function LocationFillRow({
-  title,
-  onClick,
-  busy,
-  error,
-}: {
-  title: string
-  onClick: () => void
-  busy: boolean
-  error: string | null
-}) {
-  return (
-    <>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">{title}</p>
-        <button
-          type="button"
-          onClick={onClick}
-          disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <MapPin className="size-3.5" />}
-          {busy ? 'Detecting location…' : 'Use my location'}
-        </button>
-      </div>
-      {error && <p className="text-xs text-red-600">{error}</p>}
-    </>
   )
 }
 

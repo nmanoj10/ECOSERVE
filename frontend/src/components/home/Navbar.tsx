@@ -1,5 +1,5 @@
 import { Leaf, Menu, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 
 const homeLinks = [
@@ -24,16 +24,10 @@ export default function Navbar() {
   const { pathname } = useLocation()
   const [open, setOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
-  const barRef = useRef<HTMLDivElement>(null)
   const isHome = pathname === '/'
 
   useEffect(() => {
-    const onScroll = () => {
-      setScrolled(window.scrollY > 8)
-      const max = document.documentElement.scrollHeight - window.innerHeight
-      const progress = max > 0 ? window.scrollY / max : 0
-      if (barRef.current) barRef.current.style.transform = `scaleX(${progress})`
-    }
+    const onScroll = () => setScrolled(window.scrollY > 8)
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
@@ -44,74 +38,66 @@ export default function Navbar() {
     setOpen(false)
   }, [pathname])
 
-  const renderLink = (link: (typeof pageLinks)[number] | (typeof homeLinks)[number]) => {
-    if ('to' in link) {
-      const active = pathname === link.to
-      return (
-        <Link
-          key={link.to}
-          to={link.to}
-          className={`rounded-full px-3.5 py-1.5 text-sm transition ${
-            active
-              ? 'bg-brand-50 font-medium text-brand-800'
-              : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
-          }`}
-        >
-          {link.label}
-        </Link>
-      )
+  // The mobile sheet overlays the page — stop the page scrolling behind it.
+  useEffect(() => {
+    document.body.style.overflow = open ? 'hidden' : ''
+    return () => {
+      document.body.style.overflow = ''
     }
-    return (
-      <a
-        key={link.href}
-        href={link.href}
-        className="rounded-full px-3.5 py-1.5 text-sm text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900"
-      >
-        {link.label}
-      </a>
-    )
-  }
+  }, [open])
 
   const links = isHome ? homeLinks : pageLinks
 
   return (
     <header className="fixed inset-x-0 top-0 z-50">
-      {/* Reading progress */}
-      <div className="h-0.5 bg-neutral-900/[0.06]">
-        <div
-          ref={barRef}
-          className="h-full w-full origin-left scale-x-0 bg-gradient-to-r from-brand-500 via-emerald-500 to-teal-400"
-        />
-      </div>
-
       <nav
         aria-label="Main"
-        className={`border-b transition-colors duration-300 ${
-          scrolled
-            ? 'border-neutral-200 bg-white/90 shadow-sm backdrop-blur-xl'
-            : 'border-transparent bg-white/60 backdrop-blur-md'
+        className={`transition-colors duration-300 ${
+          scrolled ? 'border-b border-neutral-200/80 bg-canvas/85 backdrop-blur-xl' : 'bg-transparent'
         }`}
       >
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+        {/* Three equal columns keep the link group optically centred. */}
+        <div className="mx-auto grid h-20 max-w-7xl grid-cols-[1fr_auto] items-center gap-6 px-6 sm:px-8 lg:grid-cols-[1fr_auto_1fr] lg:px-10">
           <Link to="/" className="flex items-center gap-2.5" aria-label="Ecoserve home">
-            <span className="flex size-9 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm shadow-brand-600/30">
+            <span className="flex size-10 items-center justify-center rounded-xl bg-brand-500 text-white">
               <Leaf className="size-5" />
             </span>
-            <span className="text-lg font-semibold tracking-tight text-neutral-900">Ecoserve</span>
+            <span className="text-[22px] font-bold tracking-tight text-neutral-900">Ecoserve</span>
           </Link>
 
-          <div className="hidden items-center gap-1 lg:flex">{links.map(renderLink)}</div>
+          <div className="hidden items-center gap-7 lg:flex">
+            {links.map((link) =>
+              'to' in link ? (
+                <Link
+                  key={link.to}
+                  to={link.to}
+                  className={`text-[15px] transition ${
+                    pathname === link.to
+                      ? 'font-medium text-neutral-900'
+                      : 'text-neutral-600 hover:text-neutral-900'
+                  }`}
+                >
+                  {link.label}
+                </Link>
+              ) : (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  className="text-[15px] text-neutral-600 transition hover:text-neutral-900"
+                >
+                  {link.label}
+                </a>
+              ),
+            )}
+          </div>
 
-          <div className="hidden items-center gap-2 lg:flex">
-            <Link
-              to="/login"
-              className="rounded-full px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100"
-            >
+          <div className="hidden items-center justify-end gap-5 lg:flex">
+            <Link to="/login" className="text-[15px] font-medium text-neutral-900 transition hover:text-brand-600">
               Log in
             </Link>
             <Link
               to="/register"
-              className="rounded-full bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+              className="rounded-full bg-neutral-900 px-6 py-3 text-[15px] font-medium text-white transition hover:bg-neutral-700"
             >
               Sign up
             </Link>
@@ -129,18 +115,16 @@ export default function Navbar() {
         </div>
 
         {open && (
-          <div className="border-t border-neutral-200 bg-white/95 px-4 pb-6 pt-2 backdrop-blur-xl lg:hidden">
-            <div className="flex flex-col gap-1">
+          <div className="border-b border-neutral-200 bg-canvas px-6 pb-8 pt-4 backdrop-blur-xl lg:hidden">
+            <div className="flex flex-col">
               {links.map((link) =>
                 'to' in link ? (
                   <Link
                     key={link.to}
                     to={link.to}
                     onClick={() => setOpen(false)}
-                    className={`rounded-lg px-3 py-2.5 text-sm font-medium transition ${
-                      pathname === link.to
-                        ? 'bg-brand-50 text-brand-800'
-                        : 'text-neutral-700 hover:bg-brand-50 hover:text-brand-800'
+                    className={`border-b border-neutral-200/70 py-3.5 text-[15px] transition ${
+                      pathname === link.to ? 'font-medium text-brand-600' : 'text-neutral-700'
                     }`}
                   >
                     {link.label}
@@ -150,25 +134,25 @@ export default function Navbar() {
                     key={link.href}
                     href={link.href}
                     onClick={() => setOpen(false)}
-                    className="rounded-lg px-3 py-2.5 text-sm font-medium text-neutral-700 transition hover:bg-brand-50 hover:text-brand-800"
+                    className="border-b border-neutral-200/70 py-3.5 text-[15px] text-neutral-700 transition"
                   >
                     {link.label}
                   </a>
                 ),
               )}
             </div>
-            <div className="mt-4 flex gap-2">
+            <div className="mt-6 flex items-center gap-3">
               <Link
                 to="/login"
                 onClick={() => setOpen(false)}
-                className="flex-1 rounded-full border border-neutral-300 px-4 py-2.5 text-center text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+                className="flex-1 rounded-full border border-neutral-200 bg-white px-5 py-3 text-center text-[15px] font-medium text-neutral-900 transition hover:bg-neutral-50"
               >
                 Log in
               </Link>
               <Link
                 to="/register"
                 onClick={() => setOpen(false)}
-                className="flex-1 rounded-full bg-brand-600 px-4 py-2.5 text-center text-sm font-medium text-white transition hover:bg-brand-700"
+                className="flex-1 rounded-full bg-neutral-900 px-5 py-3 text-center text-[15px] font-medium text-white transition hover:bg-neutral-700"
               >
                 Sign up
               </Link>

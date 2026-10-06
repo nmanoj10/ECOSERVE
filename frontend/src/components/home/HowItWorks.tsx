@@ -1,12 +1,13 @@
 import { BarChart3, PackagePlus, Sparkles, Truck } from 'lucide-react'
 
+import { Eyebrow } from '@/components/home/Eyebrow'
 import { Reveal } from '@/components/home/Reveal'
 
 const steps = [
   {
     icon: PackagePlus,
     title: 'List surplus',
-    description: 'Post what you can\u2019t sell — photos, quantities, and pickup window. Takes under two minutes.',
+    description: 'Post what you can’t sell — photos, quantities, and pickup window. Takes under two minutes.',
   },
   {
     icon: Sparkles,
@@ -27,26 +28,26 @@ const steps = [
 
 export default function HowItWorks() {
   return (
-    <section id="how-it-works" className="scroll-mt-24 bg-neutral-50 py-24 sm:py-32">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <section id="how-it-works" className="scroll-mt-24 bg-canvas py-24 sm:py-32">
+      <div className="mx-auto max-w-7xl px-6 sm:px-8 lg:px-10">
         <Reveal className="mx-auto max-w-2xl text-center">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-600">How it works</p>
-          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-neutral-900 sm:text-4xl">
+          <Eyebrow className="justify-center">How it works</Eyebrow>
+          <h2 className="mt-5 text-3xl font-semibold tracking-tight text-neutral-900 sm:text-4xl">
             From surplus to supper in four steps.
           </h2>
         </Reveal>
 
         <div className="relative mt-16">
           {/* Connector line */}
-          <div className="absolute inset-x-8 top-8 hidden h-px bg-gradient-to-r from-transparent via-brand-300 to-transparent lg:block" />
+          <div className="absolute inset-x-10 top-8 hidden h-px bg-neutral-200 lg:block" />
 
           <ol className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4 lg:gap-6">
             {steps.map((step, i) => (
-              <Reveal key={step.title} delay={i * 0.12}>
-                <li className="group relative text-center lg:text-left">
-                  <div className="relative mx-auto flex size-16 items-center justify-center rounded-2xl border border-brand-200 bg-white shadow-sm transition duration-300 group-hover:border-brand-400 group-hover:shadow-md lg:mx-0">
+              <Reveal key={step.title} delay={i * 0.1}>
+                <li className="group relative bg-canvas lg:bg-transparent">
+                  <div className="relative mx-auto flex size-16 items-center justify-center rounded-2xl border border-neutral-200 bg-white transition duration-300 group-hover:border-brand-300 lg:mx-0">
                     <step.icon className="size-7 text-brand-600" />
-                    <span className="absolute -right-2 -top-2 flex size-6 items-center justify-center rounded-full bg-brand-600 text-[11px] font-semibold text-white">
+                    <span className="absolute -right-2 -top-2 flex size-6 items-center justify-center rounded-full bg-brand-500 text-[11px] font-semibold text-white">
                       {i + 1}
                     </span>
                   </div>

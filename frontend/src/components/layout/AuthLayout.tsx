@@ -8,19 +8,52 @@ interface AuthLayoutProps {
   children: ReactNode
   /** Optional custom brand-panel content (e.g. a product mockup). Defaults to the headline + testimonial. */
   panel?: ReactNode
+  /**
+   * Optional image URL rendered edge-to-edge as the brand panel backdrop. When
+   * set, the ambient glows are swapped for the photo plus a scrim that keeps
+   * the overlaid logo, `panel`, and stats legible on any frame of the image.
+   */
+  image?: string
 }
 
 /** Two-column shell for the login/register pages: brand story + form. */
-export default function AuthLayout({ title, subtitle, children, panel }: AuthLayoutProps) {
+export default function AuthLayout({ title, subtitle, children, panel, image }: AuthLayoutProps) {
   return (
     <div className="flex min-h-screen bg-white">
       {/* Brand panel */}
-      <aside className="relative hidden w-[44%] overflow-x-hidden overflow-y-auto bg-neutral-950 lg:block">
-        <div className="absolute inset-0">
-          <div className="absolute -left-24 top-1/4 h-96 w-96 rounded-full bg-brand-500/20 blur-3xl" />
-          <div className="absolute -right-16 bottom-0 h-80 w-80 rounded-full bg-emerald-500/15 blur-3xl" />
-          <div className="absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.05)_1px,transparent_1px)] [background-size:26px_26px] [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_75%)]" />
-        </div>
+      <aside
+        className={`relative hidden w-[44%] overflow-x-hidden overflow-y-auto bg-neutral-950 lg:block ${
+          // A photo reads best filling a real viewport-sized frame, so pin the
+          // panel while the (much taller) form scrolls beside it. Without an
+          // image the panel just stretches with the page, as before.
+          image ? 'lg:sticky lg:top-0 lg:h-screen' : ''
+        }`}
+      >
+        {image ? (
+          <>
+            <div
+              className="absolute inset-0 bg-cover bg-center"
+              style={{ backgroundImage: `url(${image})` }}
+              aria-hidden="true"
+            />
+            {/* Scrim: heavier top and bottom (where the text sits), lighter through
+                the middle so the photo still reads. */}
+            <div
+              className="absolute inset-0 bg-gradient-to-b from-neutral-950/90 via-neutral-950/45 to-neutral-950/90"
+              aria-hidden="true"
+            />
+          </>
+        ) : (
+          <div className="absolute inset-0">
+            <div className="absolute -left-24 top-1/4 h-96 w-96 rounded-full bg-brand-500/20 blur-3xl" />
+            <div className="absolute -right-16 bottom-0 h-80 w-80 rounded-full bg-emerald-500/15 blur-3xl" />
+          </div>
+        )}
+        {/* Fine dot-grid texture, shared by both backdrops. */}
+        <div
+          className="absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.05)_1px,transparent_1px)] [background-size:26px_26px] [mask-image:radial-gradient(ellipse_at_center,black_25%,transparent_75%)]"
+          aria-hidden="true"
+        />
 
         <div className="relative flex h-full flex-col justify-between p-12">
           <Link to="/" className="flex items-center gap-2.5" aria-label="Ecoserve home">

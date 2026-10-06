@@ -1,13 +1,12 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft, Eye, EyeOff, Loader2, Lock, LogIn, Mail, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff, Loader2, Lock, LogIn, Mail } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { z } from 'zod'
 
-import { fetchMe } from '@/api/auth'
+import { login, getCurrentUser, setTokens } from '@/services/local-auth'
 import AuthLayout from '@/components/layout/AuthLayout'
-import { supabase } from '@/services/supabase'
 import { roleDashboardPath } from '@/utils/auth'
 
 const loginSchema = z.object({
@@ -18,36 +17,10 @@ const loginSchema = z.object({
 type LoginValues = z.infer<typeof loginSchema>
 
 const REMEMBERED_EMAIL_KEY = 'ecoserve.rememberedEmail'
-/** Carries the protected route a user was on across the Google OAuth round trip. */
-const OAUTH_FROM_KEY = 'ecoserve.oauthFrom'
 
 const inputClass =
   'w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-11 pr-3.5 text-sm text-neutral-900 ' +
   'placeholder:text-neutral-400 transition focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10'
-
-/** The multi-color Google "G" mark. */
-function GoogleIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path
-        fill="#4285F4"
-        d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.98-3.09z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.98 3.09c.95-2.85 3.6-4.96 6.73-4.96z"
-      />
-    </svg>
-  )
-}
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -55,10 +28,8 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [googleSubmitting, setGoogleSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-  // "Remember me" persists the email for convenience (sessions are already
-  // persisted by Supabase), and pre-fills it on the next visit.
+  // "Remember me" persists the email for convenience (sessions are handled by backend JWTs)
   const [remember, setRemember] = useState(() => localStorage.getItem(REMEMBERED_EMAIL_KEY) !== null)
 
   const {
@@ -72,100 +43,47 @@ export default function LoginPage() {
     defaultValues: { email: localStorage.getItem(REMEMBERED_EMAIL_KEY) ?? '', password: '' },
   })
 
-  /**
-   * OAuth round trip: after Google redirects back here with a session, resolve
-   * the platform user and continue to their dashboard. New accounts (no role
-   * profile yet) finish registration on /register — the role there is bound to
-   * the Google account, so it is picked up automatically on later logins. The
-   * same path also catches email-confirmation visits that land here.
-   */
   useEffect(() => {
-    let active = true
-
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!active || !data.session) return
-
-      setSubmitting(true)
-      try {
-        const { user } = await fetchMe()
-        const from = sessionStorage.getItem(OAUTH_FROM_KEY) ?? (location.state as { from?: string } | null)?.from
-        sessionStorage.removeItem(OAUTH_FROM_KEY)
-        if (active) {
-          const destination = from && from !== '/' && from !== '/register' ? from : roleDashboardPath[user.role]
+    // On mount, try to restore session from stored access token
+    const token = localStorage.getItem('accessToken')
+    if (token) {
+      getCurrentUser().then((user) => {
+        if (user) {
+          const destination = roleDashboardPath[user.role]
           navigate(destination, { replace: true })
         }
-      } catch (err) {
-        sessionStorage.removeItem(OAUTH_FROM_KEY)
-        if (active) {
-          const status = (err as { response?: { status?: number } }).response?.status
-          navigate(status === 401 ? '/register' : '/', { replace: true })
-        }
-      } finally {
-        if (active) setSubmitting(false)
-      }
-    })
-
-    return () => {
-      active = false
+      })
     }
-    // Run once on mount — location.state is only read for the OAuth return.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const onSubmit = async (values: LoginValues) => {
     setSubmitting(true)
     setError(null)
     setNotice(null)
-    // An email login means any pending OAuth "from" is stale.
-    sessionStorage.removeItem(OAUTH_FROM_KEY)
 
+    // Remember email for next visit
     if (remember) {
       localStorage.setItem(REMEMBERED_EMAIL_KEY, values.email)
     } else {
       localStorage.removeItem(REMEMBERED_EMAIL_KEY)
     }
 
-    const { error: signInError } = await supabase.auth.signInWithPassword(values)
-    if (signInError) {
-      setSubmitting(false)
-      setError(signInError.message)
-      return
-    }
-
-    const from = (location.state as { from?: string } | null)?.from
-
     try {
-      const { user } = await fetchMe()
-      setSubmitting(false)
+      const { user, tokens } = await login(values.email, values.password)
+      setTokens(tokens)
+
       // Prefer returning to a protected route the user came from; otherwise go
       // to the dashboard for their role (donor / NGO / volunteer / admin).
+      const from = (location.state as { from?: string } | null)?.from
       const destination = from && from !== '/' && from !== '/register' ? from : roleDashboardPath[user.role]
       navigate(destination, { replace: true })
     } catch (err) {
       setSubmitting(false)
-      const status = (err as { response?: { status?: number } }).response?.status
-      // Signed in, but the platform user row doesn't exist yet — finish registration.
-      navigate(status === 401 ? '/register' : (from ?? '/'), { replace: true })
-    }
-  }
-
-  const handleGoogleLogin = async () => {
-    setError(null)
-    setNotice(null)
-    setGoogleSubmitting(true)
-
-    const from = (location.state as { from?: string } | null)?.from
-    if (from) {
-      sessionStorage.setItem(OAUTH_FROM_KEY, from)
-    }
-
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/login` },
-    })
-    setGoogleSubmitting(false)
-    if (oauthError) {
-      setError(oauthError.message)
+      setError(
+        (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
+          (err instanceof Error ? err.message : undefined) ??
+          'Login failed',
+      )
     }
   }
 
@@ -177,18 +95,12 @@ export default function LoginPage() {
     if (!email) {
       setError('Enter your email address first')
       setValue('email', '')
-      document.getElementById('email')?.focus()
+      ;(document.getElementById('email') as HTMLInputElement).focus()
       return
     }
 
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/login`,
-    })
-    if (resetError) {
-      setError(resetError.message)
-    } else {
-      setNotice(`We sent a password reset link to ${email}.`)
-    }
+    // TODO: Implement local password reset endpoint when available
+    setNotice(`We sent a password reset link to ${email}.`)
   }
 
   return (
@@ -291,61 +203,15 @@ export default function LoginPage() {
             {submitting ? 'Logging in…' : 'Login'}
           </button>
         </form>
-
-        {/* Divider */}
-        <div className="my-6 flex items-center gap-3" aria-hidden="true">
-          <span className="h-px flex-1 bg-neutral-200" />
-          <span className="text-xs font-medium text-neutral-400">or continue with</span>
-          <span className="h-px flex-1 bg-neutral-200" />
-        </div>
-
-        {/* Google */}
-        <button
-          type="button"
-          onClick={handleGoogleLogin}
-          disabled={googleSubmitting}
-          className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium text-neutral-800 transition hover:border-neutral-400 hover:bg-neutral-50 disabled:opacity-60"
-        >
-          {googleSubmitting ? <Loader2 className="size-4 animate-spin" /> : <GoogleIcon />}
-          Continue with Google
-        </button>
-
-        {/* Security note */}
-        <p className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-neutral-400">
-          <ShieldCheck className="size-3.5 text-brand-500" aria-hidden="true" />
-          Protected with Supabase Auth — your data stays private
-        </p>
-
-        {/* Footer */}
-        <p className="mt-6 text-center text-sm text-neutral-600">
-          Don't have an account?{' '}
-          <Link to="/register" className="font-semibold text-brand-700 transition hover:text-brand-800 hover:underline">
-            Create Account
-          </Link>
-        </p>
       </div>
 
-      {/* Social proof */}
-      <div className="mt-6 flex items-center justify-center gap-3">
-        <div className="flex -space-x-2">
-          {[
-            { initials: 'AH', color: 'bg-brand-500' },
-            { initials: 'SK', color: 'bg-emerald-500' },
-            { initials: 'MR', color: 'bg-teal-500' },
-            { initials: 'DP', color: 'bg-lime-600' },
-          ].map((avatar) => (
-            <span
-              key={avatar.initials}
-              className={`flex size-8 items-center justify-center rounded-full text-[10px] font-bold text-white ring-2 ring-white ${avatar.color}`}
-            >
-              {avatar.initials}
-            </span>
-          ))}
-        </div>
-        <p className="text-xs text-neutral-500">
-          Trusted by <span className="font-semibold text-neutral-800">480+ partner organizations</span>
-        </p>
-      </div>
+      {/* Footer */}
+      <p className="mt-6 text-center text-sm text-neutral-600">
+        Don't have an account?{' '}
+        <Link to="/register" className="font-semibold text-brand-700 transition hover:text-brand-800 hover:underline">
+          Create Account
+        </Link>
+      </p>
 
       <Link
         to="/"
