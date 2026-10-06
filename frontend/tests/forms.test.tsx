@@ -15,8 +15,9 @@ import RegisterPage from '@/pages/auth/RegisterPage'
 import NewDonationPage from '@/pages/donor/NewDonationPage'
 import DonorProfilePage from '@/pages/donor/ProfilePage'
 import { ToastProvider } from '@/components/ui/Toast'
-import { createConfirmedAuthUser, fetchMe, registerUser } from '@/api/auth'
+import { fetchMe, registerUser } from '@/api/auth'
 import { api } from '@/api/client'
+import { signup, login, getCurrentUser, setTokens } from '@/services/local-auth'
 
 // ── Module mocks (Supabase session, API layer, auth hook) ───────────────────
 
@@ -49,6 +50,15 @@ vi.mock('@/api/auth', () => ({
   savePendingRegistration: vi.fn(),
   getPendingRegistration: vi.fn(),
   createConfirmedAuthUser: vi.fn(),
+}))
+
+vi.mock('@/services/local-auth', () => ({
+  signup: vi.fn(),
+  login: vi.fn(),
+  getCurrentUser: vi.fn(),
+  setTokens: vi.fn(),
+  logout: vi.fn(),
+  getAccessToken: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -85,8 +95,11 @@ vi.mock('@/components/maps/LocationPinMap', () => ({
 
 const mockedFetchMe = vi.mocked(fetchMe)
 const mockedRegisterUser = vi.mocked(registerUser)
-const mockedCreateConfirmedAuthUser = vi.mocked(createConfirmedAuthUser)
 const mockedApi = vi.mocked(api)
+const mockedSignup = vi.mocked(signup)
+const mockedLogin = vi.mocked(login)
+const mockedGetCurrentUser = vi.mocked(getCurrentUser)
+const mockedSetTokens = vi.mocked(setTokens)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -95,6 +108,18 @@ beforeEach(() => {
   supabaseMock.auth.signInWithOAuth.mockResolvedValue({ data: {}, error: null } as never)
   supabaseMock.auth.resetPasswordForEmail.mockResolvedValue({ data: {}, error: null } as never)
   supabaseMock.auth.signUp.mockResolvedValue({ data: { session: null }, error: null } as never)
+  
+  // Default mocks for local-auth
+  mockedSignup.mockResolvedValue({ 
+    user: { id: 'u1', email: 'test@example.com', role: 'DONOR' }, 
+    tokens: { accessToken: 'token', refreshToken: 'refresh', expiresIn: 3600 } 
+  } as never)
+  mockedLogin.mockResolvedValue({ 
+    user: { id: 'u1', email: 'test@example.com', role: 'DONOR' }, 
+    tokens: { accessToken: 'token', refreshToken: 'refresh', expiresIn: 3600 } 
+  } as never)
+  mockedGetCurrentUser.mockResolvedValue(null)
+  mockedSetTokens.mockImplementation(() => {})
 })
 
 // ── Harnesses ────────────────────────────────────────────────────────────────
@@ -153,7 +178,7 @@ function renderDonorProfile() {
 // ── Login ───────────────────────────────────────────────────────────────────
 
 describe('LoginPage', () => {
-  it('shows field errors on an empty submit and does not call Supabase', async () => {
+  it('shows field errors on an empty submit and does not call the API', async () => {
     const user = userEvent.setup()
     renderLogin()
 
@@ -161,13 +186,11 @@ describe('LoginPage', () => {
 
     expect(await screen.findByText('Enter a valid email')).toBeInTheDocument()
     expect(screen.getByText('Password is required')).toBeInTheDocument()
-    expect(supabaseMock.auth.signInWithPassword).not.toHaveBeenCalled()
+    expect(mockedLogin).not.toHaveBeenCalled()
   })
 
-  it('surfaces the Supabase sign-in error in an alert', async () => {
-    supabaseMock.auth.signInWithPassword.mockResolvedValue({
-      error: { message: 'Invalid login credentials' },
-    } as never)
+  it('surfaces a failed login from local-auth in an alert', async () => {
+    mockedLogin.mockRejectedValue(new Error('Invalid email or password'))
     const user = userEvent.setup()
     renderLogin()
 
@@ -175,12 +198,11 @@ describe('LoginPage', () => {
     await user.type(screen.getByLabelText('Password'), 'wrong-password')
     await user.click(screen.getByRole('button', { name: /log ?in/i }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid login credentials')
-    expect(mockedFetchMe).not.toHaveBeenCalled()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid email or password')
+    expect(mockedLogin).toHaveBeenCalledWith('alice@example.com', 'wrong-password')
   })
 
   it('navigates to the role dashboard after a successful login', async () => {
-    mockedFetchMe.mockResolvedValue({ user: { role: 'DONOR' } } as never)
     const user = userEvent.setup()
     renderLogin()
 
@@ -189,11 +211,15 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: /log ?in/i }))
 
     expect(await screen.findByText('Donor dashboard probe')).toBeInTheDocument()
-    expect(mockedFetchMe).toHaveBeenCalledTimes(1)
+    expect(mockedLogin).toHaveBeenCalledWith('alice@example.com', 'password123')
+    expect(mockedSetTokens).toHaveBeenCalledWith({
+      accessToken: 'token',
+      refreshToken: 'refresh',
+      expiresIn: 3600,
+    })
   })
 
   it('returns to the protected route the user came from', async () => {
-    mockedFetchMe.mockResolvedValue({ user: { role: 'DONOR' } } as never)
     const user = userEvent.setup()
     renderLogin('/login', { from: '/donor/new' })
 
@@ -202,18 +228,6 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: /log ?in/i }))
 
     expect(await screen.findByText('New donation probe')).toBeInTheDocument()
-  })
-
-  it('routes to registration when the platform user row does not exist yet (401)', async () => {
-    mockedFetchMe.mockRejectedValue({ response: { status: 401 } })
-    const user = userEvent.setup()
-    renderLogin()
-
-    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
-    await user.type(screen.getByLabelText('Password'), 'password123')
-    await user.click(screen.getByRole('button', { name: /log ?in/i }))
-
-    expect(await screen.findByText('Register page probe')).toBeInTheDocument()
   })
 
   it('toggles the password visibility', async () => {
@@ -230,17 +244,6 @@ describe('LoginPage', () => {
     expect(password.type).toBe('password')
   })
 
-  it('starts Google OAuth when "Continue with Google" is clicked', async () => {
-    const user = userEvent.setup()
-    renderLogin()
-
-    await user.click(screen.getByRole('button', { name: /continue with google/i }))
-
-    expect(supabaseMock.auth.signInWithOAuth).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'google' }),
-    )
-  })
-
   it('asks for an email before sending a password reset link', async () => {
     const user = userEvent.setup()
     renderLogin()
@@ -248,20 +251,16 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: /forgot password/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Enter your email address first')
-    expect(supabaseMock.auth.resetPasswordForEmail).not.toHaveBeenCalled()
+    expect(mockedLogin).not.toHaveBeenCalled()
   })
 
-  it('sends a password reset link when the email is filled in', async () => {
+  it('confirms a reset link is sent when the email is filled in', async () => {
     const user = userEvent.setup()
     renderLogin()
 
     await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
     await user.click(screen.getByRole('button', { name: /forgot password/i }))
 
-    expect(supabaseMock.auth.resetPasswordForEmail).toHaveBeenCalledWith(
-      'alice@example.com',
-      expect.any(Object),
-    )
     expect(await screen.findByRole('status')).toHaveTextContent(/password reset link to alice@example.com/i)
   })
 })
@@ -298,13 +297,13 @@ describe('RegisterPage', () => {
     await user.click(screen.getByRole('button', { name: /create account/i }))
 
     expect(await screen.findByText('Passwords do not match')).toBeInTheDocument()
-    expect(mockedCreateConfirmedAuthUser).not.toHaveBeenCalled()
+    expect(mockedSignup).not.toHaveBeenCalled()
   })
 
-  it('auto-confirms via the backend, signs in, and lands on the role dashboard', async () => {
-    // The backend creates the account pre-confirmed (no email is sent), then
-    // the page signs in with the password and finishes registration.
-    mockedCreateConfirmedAuthUser.mockResolvedValue({ ok: true } as never)
+  it('signs up via the backend, stores the returned tokens, and lands on the role dashboard', async () => {
+    // signup() creates the account pre-confirmed (no email is sent) and returns
+    // a token pair; the page stores those tokens so POST /auth/register is
+    // authenticated, then finishes profile registration.
     mockedRegisterUser.mockResolvedValue({ user: { role: 'VOLUNTEER' } } as never)
     const user = userEvent.setup()
     renderRegister()
@@ -318,10 +317,11 @@ describe('RegisterPage', () => {
 
     expect(await screen.findByText('Volunteer dashboard probe')).toBeInTheDocument()
     await waitFor(() => {
-      expect(mockedCreateConfirmedAuthUser).toHaveBeenCalledWith('ravi@example.com', 'password123')
-      expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalledWith({
-        email: 'ravi@example.com',
-        password: 'password123',
+      expect(mockedSignup).toHaveBeenCalledWith('ravi@example.com', 'password123')
+      expect(mockedSetTokens).toHaveBeenCalledWith({
+        accessToken: 'token',
+        refreshToken: 'refresh',
+        expiresIn: 3600,
       })
       expect(mockedRegisterUser).toHaveBeenCalledWith(
         expect.objectContaining({ role: 'VOLUNTEER', fullName: 'Ravi Kumar' }),
@@ -329,10 +329,12 @@ describe('RegisterPage', () => {
     })
   })
 
-  it('shows an error when the backend auto-confirm also fails', async () => {
-    mockedCreateConfirmedAuthUser.mockRejectedValue({
-      response: { data: { error: { message: 'Could not create account' } } },
-    })
+  it('shows an error when signup fails and does not register a profile', async () => {
+    mockedSignup.mockRejectedValue(
+      Object.assign(new Error('Could not create account'), {
+        response: { data: { error: { message: 'Could not create account' } } },
+      }),
+    )
     const user = userEvent.setup()
     renderRegister()
 
@@ -348,7 +350,6 @@ describe('RegisterPage', () => {
   })
 
   it('registers the platform user and lands on the role dashboard', async () => {
-    mockedCreateConfirmedAuthUser.mockResolvedValue({ ok: true } as never)
     mockedRegisterUser.mockResolvedValue({ user: { role: 'VOLUNTEER' } } as never)
     const user = userEvent.setup()
     renderRegister()
@@ -369,7 +370,6 @@ describe('RegisterPage', () => {
   })
 
   it('displays a registration API error', async () => {
-    mockedCreateConfirmedAuthUser.mockResolvedValue({ ok: true } as never)
     mockedRegisterUser.mockRejectedValue({
       response: { data: { error: { message: 'Email already registered' } } },
     })

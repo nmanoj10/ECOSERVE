@@ -2,27 +2,30 @@
  * Phase 38, Step 98 — Protected pages: real-hook integration.
  *
  * protected-route.test.tsx stubs useAuth to verify each guard branch. This file
- * drives the REAL useAuth hook against a mocked Supabase client, so a
- * regression in session restoration (getSession / onAuthStateChange wiring)
+ * drives the REAL useAuth hook against a mocked local-auth client, so a
+ * regression in session restoration (getAccessToken / getCurrentUser wiring)
  * cannot hide behind a static hook mock.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import { ProtectedRoute } from '@/routes/ProtectedRoute'
+import type { User } from '@/services/local-auth'
+import { getAccessToken, getCurrentUser } from '@/services/local-auth'
 
-// Real useAuth; only the Supabase client and the session recorder are mocked.
-const { supabaseMock } = vi.hoisted(() => ({
-  supabaseMock: {
-    auth: {
-      getSession: vi.fn(),
-      onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
-    },
-  },
+// Real useAuth; only the local-auth service is mocked.
+const mockedGetAccessToken = vi.mocked(getAccessToken)
+const mockedGetCurrentUser = vi.mocked(getCurrentUser)
+
+vi.mock('@/services/local-auth', () => ({
+  getAccessToken: vi.fn(),
+  getCurrentUser: vi.fn(),
+  signup: vi.fn(),
+  login: vi.fn(),
+  setTokens: vi.fn(),
+  logout: vi.fn(),
 }))
-
-vi.mock('@/services/supabase', () => ({ supabase: supabaseMock }))
 
 vi.mock('@/api/auth', () => ({
   registerSession: vi.fn(),
@@ -40,11 +43,18 @@ function renderProtected() {
 }
 
 describe('ProtectedRoute + real useAuth', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockedGetAccessToken.mockReturnValue(null)
+    mockedGetCurrentUser.mockResolvedValue(null)
+  })
+
   it('shows the loading screen until the session resolves, then renders the children', async () => {
-    let resolveSession: (value: unknown) => void = () => {}
-    supabaseMock.auth.getSession.mockReturnValue(
+    let resolveUser: (value: User | null) => void = () => {}
+    mockedGetAccessToken.mockReturnValue('token')
+    mockedGetCurrentUser.mockReturnValue(
       new Promise((resolve) => {
-        resolveSession = resolve
+        resolveUser = resolve
       }),
     )
 
@@ -54,15 +64,16 @@ describe('ProtectedRoute + real useAuth', () => {
     expect(screen.getByText('Loading…')).toBeInTheDocument()
     expect(screen.queryByText('secret content')).not.toBeInTheDocument()
 
-    // Supabase resolves with a signed-in user → the guard renders the children.
-    resolveSession({ data: { session: { user: { id: 'u1', email: 'a@b.c' } } }, error: null })
+    // Local auth resolves with a signed-in user → the guard renders the children.
+    resolveUser({ id: 'u1', email: 'a@b.c', role: 'DONOR', status: 'ACTIVE' })
 
     expect(await screen.findByText('secret content')).toBeInTheDocument()
     expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
   })
 
   it('redirects to /login when the restored session is null', async () => {
-    supabaseMock.auth.getSession.mockResolvedValue({ data: { session: null }, error: null })
+    mockedGetAccessToken.mockReturnValue('token')
+    mockedGetCurrentUser.mockResolvedValue(null)
 
     renderProtected()
 

@@ -4,6 +4,7 @@ import {
   createInstantSignup,
   getPendingRegistration,
   listSessions,
+  login,
   logout,
   me,
   refresh,
@@ -12,11 +13,11 @@ import {
   revokeSession,
   savePendingRegistration,
 } from '../controllers/authController.js'
-import { authRequired, verifyToken } from '../middleware/auth.js'
+import { authRequired, localVerifyToken } from '../middleware/auth.js'
 import { authLimiter } from '../middleware/rateLimiter.js'
 import { validate } from '../middleware/validate.js'
 import { logoutSchema, refreshSchema, sessionSchema } from '../validators/auth.js'
-import { pendingRegistrationSchema, registerSchema, signupSchema } from '../validators/register.js'
+import { loginSchema, pendingRegistrationSchema, registerSchema, signupSchema } from '../validators/register.js'
 
 export const authRoutes = Router()
 
@@ -31,8 +32,11 @@ authRoutes.use(authLimiter)
 // without email verification (see docs/security.md).
 authRoutes.post('/signup', validate(signupSchema), createInstantSignup)
 
-// Protected by a valid Supabase token (the token IS the proof of identity).
-authRoutes.post('/register', verifyToken, validate(registerSchema), register)
+// Login — authenticates email/password and returns JWT tokens
+authRoutes.post('/login', validate(loginSchema), login)
+
+// Protected by a valid local JWT token (signed with JWT_SECRET).
+authRoutes.post('/register', localVerifyToken, validate(registerSchema), register)
 authRoutes.get('/me', authRequired, me)
 
 // Registration form saved before email confirmation, so the confirmation-link

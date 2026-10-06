@@ -4,11 +4,11 @@ import { Server } from 'socket.io'
 import type { Socket } from 'socket.io'
 
 import { prisma } from '../config/prisma.js'
-import { maybeNotifyApproaching } from '../services/deliveryService.js'
-import { verifySupabaseToken } from '../config/supabase.js'
+import { verifyLocalToken } from '../config/supabase.js'
 import { allowedOrigins } from '../middleware/security.js'
 import { haversineKm } from '../utils/geo.js'
 import { submitLocationSchema } from '../validators/location.js'
+import { maybeNotifyApproaching } from '../services/deliveryService.js'
 
 /**
  * Phase 27, Step 71 — persistence throttle knobs.
@@ -85,7 +85,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
     try {
       const token = socket.handshake.auth?.token as string | undefined
       if (!token) throw new Error('Missing token')
-      const payload = await verifySupabaseToken(token)
+      const payload = await verifyLocalToken(token)
       socket.data.userId = payload.sub
       next()
     } catch {

@@ -59,7 +59,7 @@ export async function uploadImage(file: File, folder = 'donations'): Promise<Upl
   form.append('fileName', file.name)
   form.append('folder', folder)
   form.append('useUniqueFileName', 'true')
-  form.append('publicKey', publicKey)
+  form.append('publicKey', publicKey as string)
   form.append('token', auth.token)
   form.append('expire', String(auth.expire))
   form.append('signature', auth.signature)

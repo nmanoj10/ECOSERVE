@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express'
 
 import { prisma } from '../config/prisma.js'
-import { verifySupabaseToken } from '../config/supabase.js'
+import { verifyLocalToken } from '../config/supabase.js'
 import { HttpError } from '../utils/HttpError.js'
 
 /** Reads + verifies the Bearer token. Throws HttpError on any failure. */
@@ -13,8 +13,8 @@ async function extractClaims(req: Request): Promise<{ sub: string; email?: strin
   }
 
   try {
-    const payload = await verifySupabaseToken(header.slice('Bearer '.length))
-    return { sub: payload.sub, email: payload.email }
+    const payload = await verifyLocalToken(header.slice('Bearer '.length))
+    return { sub: payload.sub as string, email: payload.email as string | undefined }
   } catch {
     throw new HttpError(401, 'UNAUTHORIZED', 'Invalid or expired token')
   }
@@ -26,6 +26,12 @@ async function extractClaims(req: Request): Promise<{ sub: string; email?: strin
  * Note: relies on Express 5 forwarding rejected promises to the error handler.
  */
 export async function verifyToken(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  req.auth = await extractClaims(req)
+  next()
+}
+
+/** Verifies a local JWT token (alias for extractClaims-based auth). */
+export async function localVerifyToken(req: Request, _res: Response, next: NextFunction): Promise<void> {
   req.auth = await extractClaims(req)
   next()
 }

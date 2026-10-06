@@ -16,19 +16,10 @@ const envSchema = z.object({
   // prevents clients from spoofing that header to bypass rate limits.
   TRUST_PROXY: z.enum(['true', 'false']).default('false'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  SUPABASE_URL: z.string().url('SUPABASE_URL is required'),
-  // Phase 35/36, Step 90 — guards against the most dangerous misconfiguration:
-  // pasting a *secret* into a publishable (client-exposed) variable. The
-  // publishable key is shipped to the browser via VITE_*, so if it accidentally
-  // holds a secret key the app fails fast instead of leaking it.
-  SUPABASE_PUBLISHABLE_KEY: z
-    .string()
-    .min(1, 'SUPABASE_PUBLISHABLE_KEY is required')
-    .refine((key) => !key.toLowerCase().startsWith('sb_secret_'), {
-      message: 'SUPABASE_PUBLISHABLE_KEY looks like a secret key (sb_secret_…) — use the publishable key',
-    }),
-  SUPABASE_SECRET_KEY: z.string().min(1, 'SUPABASE_SECRET_KEY is required'),
-  SUPABASE_JWKS_URL: z.string().url('SUPABASE_JWKS_URL is required'),
+  // Local JWT authentication — secret used to sign access/refresh tokens
+  JWT_SECRET: z.string().min(1, 'JWT_SECRET is required'),
+  // Token expiry in seconds (default 1 hour if not set)
+  JWT_EXPIRES_IN: z.coerce.number().int().positive().default(3600),
 
   // ImageKit (Step 44). Optional — the app boots without them; the upload
   // signing endpoint reports `configured: false` until the private key is set.
@@ -56,6 +47,26 @@ const envSchema = z.object({
 
   // Rescue sweep (Phase 19) — how often the job scans for expiring food.
   RESCUE_INTERVAL_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
+  // Rescue & redistribution tuning — all configurable instead of hard-coded:
+  //   RESCUE_WINDOW_HOURS        – start alerting donors/volunteers this far
+  //                                before the food expires (up to 6 h).
+  //   EXPIRY_GRACE_MINUTES       – sweep also catches food that expired up to
+  //                                this long ago (delayed job runs).
+  //   VOLUNTEER_RADIUS_KM        – only volunteers within this distance of the
+  //                                donation get the rescue alert.
+  //   RESCUE_SPOT_RADIUS_KM      – search radius for nearby distribution spots
+  //                                (bus stands, temples, shelters, …).
+  //   RESCUE_AVG_SPEED_KMH       – straight-line speed used to budget the
+  //                                "~X min" travel time shown per spot.
+  //   RESCUE_PRIORITY_*_HOURS    – urgency tiers by hours left at alert time.
+  RESCUE_WINDOW_HOURS: z.coerce.number().positive().default(6),
+  EXPIRY_GRACE_MINUTES: z.coerce.number().nonnegative().default(30),
+  VOLUNTEER_RADIUS_KM: z.coerce.number().positive().default(15),
+  RESCUE_SPOT_RADIUS_KM: z.coerce.number().positive().default(3),
+  RESCUE_AVG_SPEED_KMH: z.coerce.number().positive().default(20),
+  RESCUE_PRIORITY_INCREASED_HOURS: z.coerce.number().positive().default(6),
+  RESCUE_PRIORITY_URGENT_HOURS: z.coerce.number().positive().default(3),
+  RESCUE_PRIORITY_EMERGENCY_HOURS: z.coerce.number().positive().default(1),
 
   // Phase 37 background jobs — how often each periodic sweep runs.
   // Expiry sweep (Step 93): marks past-expiry donations EXPIRED.

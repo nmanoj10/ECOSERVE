@@ -159,12 +159,26 @@ describe('register cleanup', () => {
     expect(res.status).toHaveBeenCalledWith(201)
   })
 
-  it('consumes a stale saved form when the user already exists (idempotent path)', async () => {
+  it('updates the profile and consumes a stale saved form when the user already exists (idempotent path)', async () => {
     mockedPrisma.user.findUnique.mockResolvedValue({ id: 'user-1', role: 'DONOR' } as never)
+    const tx = {
+      user: { update: vi.fn().mockResolvedValue({ id: 'user-1', role: 'DONOR' } as never) },
+      donor: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+      ngo: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+      volunteer: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+      pendingRegistration: { deleteMany: vi.fn() },
+    }
+    mockedPrisma.$transaction.mockImplementation(async (fn: (t: typeof tx) => unknown) => fn(tx))
 
-    await register(makeReq({ body: { fullName: 'Alice', role: 'DONOR' } }) as never, makeRes() as never)
+    const res = makeRes()
+    await register(makeReq({ body: { fullName: 'Alice', role: 'DONOR' } }) as never, res as never)
 
-    expect(mockedPrisma.$transaction).not.toHaveBeenCalled()
-    expect(mockedPrisma.pendingRegistration.deleteMany).toHaveBeenCalledWith({ where: { email: 'a@b.com' } })
+    // The profile is refreshed in place instead of failing with a duplicate.
+    expect(tx.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'user-1' }, data: expect.objectContaining({ fullName: 'Alice', role: 'DONOR' }) }),
+    )
+    expect(tx.pendingRegistration.deleteMany).toHaveBeenCalledWith({ where: { email: 'a@b.com' } })
+    expect(res.status).toHaveBeenCalledWith(200)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ user: expect.objectContaining({ id: 'user-1' }) }))
   })
 })

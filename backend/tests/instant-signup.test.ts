@@ -1,15 +1,24 @@
 /**
  * Instant-signup tests.
  *
- * `POST /auth/signup` creates a Supabase auth user that is already
- * email-confirmed via the Admin API (`email_confirm: true` — no confirmation
- * email is sent), so demo signups work even while the project still has
- * "Confirm email" enabled or the free-plan email quota is exhausted. The
- * client signs in with the password right after.
+ * `POST /auth/signup` creates a local auth user that is already active —
+ * no confirmation email is sent — so demo signups work immediately and the
+ * client signs in with the password right after. If the email already exists,
+ * the existing account's password is set to the caller-chosen one and the
+ * account is (re)activated (⚠️ demo-only semantics, see goTrueService).
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInstantSignup } from '../src/controllers/authController.js'
+import bcrypt from 'bcrypt'
+
+const prismaMock = vi.hoisted(() => ({
+  user: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn() },
+}))
+
+vi.mock('../src/config/prisma.js', () => ({ prisma: prismaMock }))
+
+const mockedPrisma = prismaMock
 
 function makeReq(overrides: Record<string, unknown> = {}) {
   return { body: {}, ...overrides }
@@ -20,19 +29,13 @@ function makeRes() {
 }
 
 describe('createInstantSignup', () => {
-  const fetchMock = vi.fn()
-
   beforeEach(() => {
-    fetchMock.mockReset()
-    vi.stubGlobal('fetch', fetchMock)
+    vi.clearAllMocks()
   })
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('creates a pre-confirmed user via the Admin API and returns 201', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 'u1' }), { status: 200 }))
+  it('creates a new active local user and returns 201', async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue(null)
+    mockedPrisma.user.create.mockResolvedValue({ id: 'u1', email: 'a@b.com' } as never)
 
     const res = makeRes()
     await createInstantSignup(
@@ -40,33 +43,24 @@ describe('createInstantSignup', () => {
       res as never,
     )
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toContain('/auth/v1/admin/users')
-    expect(init.method).toBe('POST')
-    expect(JSON.parse(init.body as string)).toEqual({
-      email: 'a@b.com',
-      password: 'password123',
-      email_confirm: true,
-    })
+    const createArgs = mockedPrisma.user.create.mock.calls[0]?.[0]
+    expect(createArgs?.data?.email).toBe('a@b.com')
+    expect(createArgs?.data?.status).toBe('ACTIVE')
+    // The password must be stored hashed, never in plaintext.
+    expect(createArgs?.data?.passwordHash).toBeDefined()
+    expect(createArgs?.data?.passwordHash).not.toBe('password123')
+    expect(await bcrypt.compare('password123', createArgs?.data?.passwordHash)).toBe(true)
     expect(res.status).toHaveBeenCalledWith(201)
     expect(res.json).toHaveBeenCalledWith({ ok: true })
   })
 
-  it('confirms an existing unconfirmed account instead of failing', async () => {
-    // 1) create → the email is already registered (unconfirmed from an earlier signup)
-    fetchMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          error_code: 'user_already_exists',
-          msg: 'A user with this email address has already been registered',
-        }),
-        { status: 422 },
-      ),
-    )
-    // 2) lookup the existing user by email
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ users: [{ id: 'existing-1' }] }), { status: 200 }))
-    // 3) update → mark the email confirmed
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ id: 'existing-1' }), { status: 200 }))
+  it('adopts the caller-chosen password on an existing account (demo re-registration path)', async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      id: 'existing-1',
+      email: 'a@b.com',
+      status: 'ACTIVE',
+    } as never)
+    mockedPrisma.user.update.mockResolvedValue({ id: 'existing-1' } as never)
 
     const res = makeRes()
     await createInstantSignup(
@@ -74,21 +68,38 @@ describe('createInstantSignup', () => {
       res as never,
     )
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
-    const updateCall = fetchMock.mock.calls[2] as [string, RequestInit]
-    expect(updateCall[0]).toContain('/auth/v1/admin/users/existing-1')
-    expect(updateCall[1].method).toBe('PUT')
-    expect(JSON.parse(updateCall[1].body as string)).toEqual({ email_confirm: true })
+    expect(mockedPrisma.user.create).not.toHaveBeenCalled()
+    const updateArgs = mockedPrisma.user.update.mock.calls[0]?.[0]
+    expect(updateArgs?.where).toEqual({ id: 'existing-1' })
+    expect(updateArgs?.data?.status).toBe('ACTIVE')
+    expect(await bcrypt.compare('password123', updateArgs?.data?.passwordHash)).toBe(true)
     expect(res.status).toHaveBeenCalledWith(201)
   })
 
-  it('surfaces an error when the Admin API rejects the signup', async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ msg: 'Signup is not allowed for this project' }), { status: 400 }),
+  it('reactivates a suspended existing account', async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      id: 'suspended-1',
+      email: 'a@b.com',
+      status: 'SUSPENDED',
+    } as never)
+    mockedPrisma.user.update.mockResolvedValue({ id: 'suspended-1' } as never)
+
+    const res = makeRes()
+    await createInstantSignup(
+      makeReq({ body: { email: 'a@b.com', password: 'password123' } }) as never,
+      res as never,
     )
+
+    const updateArgs = mockedPrisma.user.update.mock.calls[0]?.[0]
+    expect(updateArgs?.data?.status).toBe('ACTIVE')
+    expect(res.status).toHaveBeenCalledWith(201)
+  })
+
+  it('surfaces a database failure instead of swallowing it', async () => {
+    mockedPrisma.user.findUnique.mockRejectedValue(new Error('db down'))
 
     await expect(
       createInstantSignup(makeReq({ body: { email: 'a@b.com', password: 'password123' } }) as never, makeRes() as never),
-    ).rejects.toMatchObject({ status: 400, code: 'SIGNUP_FAILED' })
+    ).rejects.toThrow('db down')
   })
 })

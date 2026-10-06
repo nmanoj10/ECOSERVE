@@ -13,7 +13,7 @@ const poolConnectionString = env.DATABASE_URL.replace(/([?&])sslmode=[^&#]*/i, '
 
 const pool = new pg.Pool({
   connectionString: poolConnectionString,
-  ssl: { rejectUnauthorized: false },
+  ssl: false,
 })
 const adapter = new PrismaPg(pool)
 

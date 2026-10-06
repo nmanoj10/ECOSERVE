@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express'
 
 import { prisma } from '../config/prisma.js'
-import { createOrConfirmAuthUser, refreshWithGoTrue } from '../services/goTrueService.js'
+import { createOrConfirmAuthUser, findAndVerifyUser, generateTokenPayload, refreshLocalToken } from '../services/goTrueService.js'
 import {
   findSessionByHash,
   hashToken,
@@ -12,8 +12,10 @@ import {
   tokenExpiry,
 } from '../services/sessionService.js'
 import { HttpError } from '../utils/HttpError.js'
+import { env } from '../config/env.js'
+import jwt from 'jsonwebtoken'
 import type { LogoutBody, RefreshBody } from '../validators/auth.js'
-import type { PendingRegistrationBody, RegisterBody, SignupBody } from '../validators/register.js'
+import type { LoginBody, PendingRegistrationBody, RegisterBody, SignupBody } from '../validators/register.js'
 
 /** How long a saved registration form stays valid (covers the signup link window). */
 const PENDING_REGISTRATION_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -38,10 +40,52 @@ export async function register(req: Request, res: Response): Promise<void> {
 
   const existing = await prisma.user.findUnique({ where: { id: sub } })
   if (existing) {
-    // Already registered — consume any stale saved form for this email so the
-    // invariant "registered ⇒ no pending row" holds.
-    await prisma.pendingRegistration.deleteMany({ where: { email } })
-    res.status(200).json({ user: existing })
+    // User exists — update profile and create role-specific profile if missing
+    await prisma.$transaction(async (tx) => {
+      // Update user profile
+      await tx.user.update({
+        where: { id: sub },
+        data: {
+          fullName: body.fullName,
+          phone: body.phone ?? null,
+          role: body.role,
+        },
+      })
+
+      // Create role-specific profile if missing
+      if (body.role === 'DONOR' && body.donor) {
+        const existingDonor = await tx.donor.findUnique({ where: { userId: sub } })
+        if (!existingDonor) {
+          await tx.donor.create({ data: { userId: sub, ...body.donor } })
+        } else {
+          await tx.donor.update({ where: { userId: sub }, data: body.donor })
+        }
+      } else if (body.role === 'NGO' && body.ngo) {
+        const existingNgo = await tx.ngo.findUnique({ where: { userId: sub } })
+        if (!existingNgo) {
+          await tx.ngo.create({ data: { userId: sub, ...body.ngo } })
+        } else {
+          await tx.ngo.update({ where: { userId: sub }, data: body.ngo })
+        }
+      } else if (body.role === 'VOLUNTEER' && body.volunteer) {
+        const existingVolunteer = await tx.volunteer.findUnique({ where: { userId: sub } })
+        if (!existingVolunteer) {
+          await tx.volunteer.create({ data: { userId: sub, ...body.volunteer } })
+        } else {
+          await tx.volunteer.update({ where: { userId: sub }, data: body.volunteer })
+        }
+      }
+
+      // Registration is complete — consume the saved form (if any) so it can't
+      // be replayed on a later visit.
+      await tx.pendingRegistration.deleteMany({ where: { email } })
+    })
+
+    const user = await prisma.user.findUnique({
+      where: { id: sub },
+      include: { donor: true, ngo: true, volunteer: true },
+    })
+    res.status(200).json({ user })
     return
   }
 
@@ -85,6 +129,58 @@ export async function createInstantSignup(req: Request, res: Response): Promise<
   const { email, password } = req.body as SignupBody
   await createOrConfirmAuthUser(email, password)
   res.status(201).json({ ok: true })
+}
+
+/**
+ * Authenticates a user with email/password and returns JWT tokens.
+ */
+export async function login(req: Request, res: Response): Promise<void> {
+  const { email, password } = req.body as LoginBody
+
+  const user = await findAndVerifyUser(email, password)
+  if (!user) {
+    throw new HttpError(401, 'INVALID_CREDENTIALS', 'Invalid email or password')
+  }
+
+  if (user.status !== 'ACTIVE') {
+    throw new HttpError(403, 'ACCOUNT_SUSPENDED', 'This account is not active')
+  }
+
+  // Generate access token
+  const accessTokenPayload = generateTokenPayload(user.id, user.email, env.JWT_EXPIRES_IN)
+  const accessToken = jwt.sign(accessTokenPayload, env.JWT_SECRET, { algorithm: 'HS256' })
+
+  // Generate refresh token (random UUID)
+  const refreshToken = crypto.randomUUID()
+
+  // Store refresh token hash in sessions table
+  await prisma.session.create({
+    data: {
+      userId: user.id,
+      refreshTokenHash: hashToken(refreshToken),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+    },
+  })
+
+  // Return user profile and tokens
+  const userProfile = {
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    role: user.role,
+    phone: user.phone,
+    status: user.status,
+    // Role-specific profiles will be loaded by the frontend via /me if needed
+  }
+
+  res.json({
+    user: userProfile,
+    tokens: {
+      accessToken,
+      refreshToken,
+      expiresIn: env.JWT_EXPIRES_IN,
+    },
+  })
 }
 
 /**
@@ -165,7 +261,7 @@ export async function refresh(req: Request, res: Response): Promise<void> {
 
   let tokens
   try {
-    tokens = await refreshWithGoTrue(refreshToken)
+    tokens = await refreshLocalToken(refreshToken)
   } catch (err) {
     // The token is no longer valid upstream — revoke our record too.
     await revokeSessionRow(session.id, session.userId)

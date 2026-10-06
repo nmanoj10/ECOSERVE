@@ -1,5 +1,9 @@
+import { prisma } from '../config/prisma.js'
 import { env } from '../config/env.js'
 import { HttpError } from '../utils/HttpError.js'
+import bcrypt from 'bcrypt'
+import jwt from 'jsonwebtoken'
+import { hashToken } from './sessionService.js'
 
 export interface TokenPair {
   accessToken: string
@@ -8,102 +12,175 @@ export interface TokenPair {
 }
 
 /**
- * Exchanges a refresh token for a fresh token pair via the GoTrue token
- * endpoint. GoTrue rotates the refresh token on every successful exchange.
+ * Generates a local JWT token payload.
+ * The actual signing is done by the caller using jwt.sign(payload, env.JWT_SECRET).
  */
-export async function refreshWithGoTrue(refreshToken: string): Promise<TokenPair> {
-  const res = await fetch(`${env.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-    method: 'POST',
-    headers: {
-      apikey: env.SUPABASE_PUBLISHABLE_KEY,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  })
+export function generateTokenPayload(sub: string, email: string, expiresIn: number): {
+  sub: string
+  email: string
+  iat: number
+  exp: number
+} {
+  const iat = Math.floor(Date.now() / 1000)
+  const exp = iat + expiresIn
+  return { sub, email, iat, exp }
+}
 
-  const data = (await res.json().catch(() => null)) as
-    | { access_token?: unknown; refresh_token?: unknown; expires_in?: unknown; error_description?: unknown }
-    | null
+/** Hashes a plain password using bcrypt. */
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 12)
+}
 
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 400) {
-      throw new HttpError(
-        401,
-        'INVALID_REFRESH_TOKEN',
-        typeof data?.error_description === 'string'
-          ? data.error_description
-          : 'The refresh token was rejected',
-      )
-    }
-    if (res.status === 429) {
-      throw new HttpError(429, 'RATE_LIMITED', 'Too many refresh attempts, please try again later')
-    }
-    throw new HttpError(502, 'UPSTREAM_ERROR', `GoTrue refresh failed (HTTP ${res.status})`)
-  }
-
-  if (typeof data?.access_token !== 'string' || typeof data?.refresh_token !== 'string') {
-    throw new HttpError(502, 'UPSTREAM_ERROR', 'GoTrue returned an unexpected token response')
-  }
-
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresIn: typeof data.expires_in === 'number' ? data.expires_in : 3600,
-  }
+/** Verifies a plain password against a bcrypt hash. */
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(password, hash)
 }
 
 /**
- * Creates a Supabase auth user that is already email-confirmed via the Admin
- * API (`email_confirm: true` — no confirmation email is sent). Powers
- * `POST /auth/signup` so demo signups work instantly even while the project
- * still has "Confirm email" enabled (and sidesteps the free-plan email quota).
+ * Creates a local auth user in PostgreSQL (already confirmed).
+ * Powers `POST /auth/signup` so signups work instantly.
+ */
+export async function createLocalAuthUser(email: string, password: string): Promise<void> {
+  // Check if user already exists
+  const existing = await prisma.user.findUnique({ where: { email } })
+  if (existing) {
+    // If user exists, just ensure they're active
+    if (existing.status !== 'ACTIVE') {
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: { status: 'ACTIVE' },
+      })
+    }
+    return
+  }
+
+  // Create new user with confirmed status
+  const passwordHash = await hashPassword(password)
+  await prisma.user.create({
+    data: {
+      id: crypto.randomUUID(),
+      email,
+      passwordHash,
+      fullName: '',
+      phone: null,
+      role: 'DONOR', // default role; will be updated during profile registration
+      status: 'ACTIVE',
+    },
+  })
+}
+
+/**
+ * Creates or confirms a local auth user in PostgreSQL.
+ * If the email is already registered, the existing account's password is set
+ * to the caller-chosen one and the account is (re)activated.
+ * Powers `POST /auth/signup` so demo signups work instantly.
  *
- * If the email is already registered (e.g. an earlier signup left an
- * unconfirmed user), the existing account is confirmed instead of failing.
+ * ⚠️ DEMO-ONLY semantics: this endpoint lets anyone create a confirmed account
+ * for ANY address with a caller-chosen password. Resetting the password on an
+ * existing account is part of that contract — without it, a re-registration
+ * (or a signup that collided with a seeded demo account) fails the follow-up
+ * login with a confusing 401. Do NOT ship this behavior without email
+ * verification.
  */
 export async function createOrConfirmAuthUser(email: string, password: string): Promise<void> {
-  const headers = {
-    apikey: env.SUPABASE_SECRET_KEY,
-    Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}`,
-    'Content-Type': 'application/json',
+  const passwordHash = await hashPassword(password)
+
+  // Check if user already exists by email
+  const existing = await prisma.user.findUnique({ where: { email } })
+
+  if (existing) {
+    // Account exists — adopt the caller-chosen password and ensure it's active.
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: { passwordHash, status: 'ACTIVE' },
+    })
+    return
   }
 
-  const createRes = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ email, password, email_confirm: true }),
+  // Create new user with confirmed status
+  await prisma.user.create({
+    data: {
+      id: crypto.randomUUID(),
+      email,
+      passwordHash,
+      fullName: '',
+      phone: null,
+      role: 'DONOR', // default role; will be updated during profile registration
+      status: 'ACTIVE',
+    },
+  })
+}
+
+/**
+ * Finds a user by email and verifies their password.
+ * Returns the user if credentials are valid, null otherwise.
+ */
+export async function findAndVerifyUser(email: string, password: string) {
+  const user = await prisma.user.findUnique({ where: { email } })
+  if (!user || !user.passwordHash) {
+    return null
+  }
+  const valid = await verifyPassword(password, user.passwordHash)
+  if (!valid) {
+    return null
+  }
+  return user
+}
+
+/**
+ * Refreshes a local access token using a refresh token from the sessions table.
+ * The refresh token is the credential: it must exist in the `sessions` table (as a hash),
+ * which is what makes it revocable — a revoked token is rejected here before it ever reaches GoTrue.
+ * On success the old session row is consumed and the rotated token is recorded.
+ */
+export async function refreshLocalToken(refreshToken: string): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
+  const refreshTokenHash = hashToken(refreshToken)
+  const session = await prisma.session.findUnique({
+    where: { refreshTokenHash },
   })
 
-  if (createRes.ok) return
-
-  const createData = (await createRes.json().catch(() => null)) as { error_code?: string; msg?: string } | null
-  const alreadyRegistered =
-    createRes.status === 409 ||
-    createRes.status === 422 ||
-    createData?.error_code === 'user_already_exists' ||
-    (typeof createData?.msg === 'string' && createData.msg.toLowerCase().includes('already been registered'))
-
-  if (alreadyRegistered) {
-    // The account exists (possibly unconfirmed from a previous signup) — find
-    // it and mark the email confirmed, so login works immediately.
-    const listRes = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users?email=${encodeURIComponent(email)}`, {
-      headers,
-    })
-    const listData = (await listRes.json().catch(() => null)) as { users?: Array<{ id?: string }> } | null
-    const userId = listData?.users?.[0]?.id
-    if (userId) {
-      const updateRes = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
-        method: 'PUT',
-        headers,
-        body: JSON.stringify({ email_confirm: true }),
-      })
-      if (updateRes.ok) return
-    }
+  if (!session) {
+    throw new HttpError(401, 'REFRESH_TOKEN_REVOKED', 'Refresh token is unknown or revoked')
   }
 
-  throw new HttpError(
-    400,
-    'SIGNUP_FAILED',
-    typeof createData?.msg === 'string' ? createData.msg : 'Could not create account',
-  )
+  // Phase 35, Step 89 — defense in depth: never mint fresh tokens for a
+  // suspended (or missing) account. Suspension normally deletes the session
+  // rows, but this closes the race window between those two operations.
+  const account = await prisma.user.findUnique({ where: { id: session.userId }, select: { status: true, email: true } })
+  if (!account || account.status !== 'ACTIVE') {
+    await prisma.session.delete({ where: { id: session.id } })
+    throw new HttpError(403, 'ACCOUNT_SUSPENDED', 'This account is not active')
+  }
+
+  // Generate new token payload
+  const payload = generateTokenPayload(session.userId, account.email || '', 3600)
+
+  // Generate new refresh token (random UUID for demo)
+  const newRefreshToken = crypto.randomUUID()
+  const newRefreshTokenHash = hashToken(newRefreshToken)
+
+  // Rotation: consume the old record, persist the new one.
+  await prisma.session.delete({ where: { id: session.id } })
+  try {
+    await prisma.session.create({
+      data: {
+        userId: session.userId,
+        refreshTokenHash: newRefreshTokenHash,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+      },
+    })
+  } catch (err) {
+    // A concurrent refresh already recorded this rotated token (GoTrue reuse
+    // interval serves the same pair) — not an error.
+    if (err instanceof Error && !err.message.includes('Unique constraint')) throw err
+  }
+
+  // Sign the access token exactly like login() does — the auth middleware
+  // verifies it with HS256 + JWT_SECRET, so an unsigned blob would 401 on the
+  // very next request after a refresh.
+  return {
+    accessToken: jwt.sign(payload, env.JWT_SECRET, { algorithm: 'HS256' }),
+    refreshToken: newRefreshToken,
+    expiresIn: 3600,
+  }
 }

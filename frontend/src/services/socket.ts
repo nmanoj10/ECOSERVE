@@ -1,7 +1,6 @@
 import { io, type Socket } from 'socket.io-client'
 
 import type { GpsSample } from '@/api/volunteer'
-import { supabase } from './supabase'
 
 let socket: Socket | null = null
 
@@ -17,7 +16,7 @@ function baseUrl(): string {
 
 /**
  * Connects the authenticated socket (idempotent). The backend requires the
- * same Supabase JWT the REST API uses, so we attach it in the handshake.
+ * same local JWT the REST API uses, so we attach it in the handshake.
  * Returns `null` when there is no active session.
  */
 export async function connectSocket(): Promise<Socket | null> {
@@ -30,8 +29,8 @@ export async function connectSocket(): Promise<Socket | null> {
     return socket
   }
 
-  const { data } = await supabase.auth.getSession()
-  const token = data.session?.access_token
+  // Read the access token from localStorage (set by local-auth.ts auth flow)
+  const token = localStorage.getItem('accessToken')
   if (!token) return null
 
   // Note: the token is attached at connect time; a long-lived tab reconnects

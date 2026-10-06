@@ -65,3 +65,13 @@ export const signupSchema = z.object({
 })
 
 export type SignupBody = z.infer<typeof signupSchema>
+
+/**
+ * Login schema — validates email/password credentials.
+ */
+export const loginSchema = z.object({
+  email: z.string().email('Enter a valid email'),
+  password: z.string().min(1, 'Password is required'),
+})
+
+export type LoginBody = z.infer<typeof loginSchema>

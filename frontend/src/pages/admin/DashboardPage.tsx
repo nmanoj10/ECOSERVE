@@ -106,7 +106,7 @@ export default function AdminDashboardPage() {
     load()
   }, [load])
 
-  const firstName = profile?.fullName?.split(' ')[0] ?? user?.user_metadata?.full_name?.split(' ')[0] ?? 'admin'
+  const firstName = profile?.fullName?.split(' ')[0] ?? user?.fullName?.split(' ')[0] ?? 'admin'
   const growth = (analytics?.byMonth ?? []).map((point) => ({ month: monthShort(point.month), kg: point.foodSavedKg }))
 
   // Heatmap (Step 80): one scaled teal circle per ~0.1° cell of delivered pickups.

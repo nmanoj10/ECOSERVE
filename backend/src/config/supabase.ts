@@ -1,20 +1,20 @@
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose'
+import { jwtVerify } from 'jose'
 
 import { env } from './env.js'
 
-/** A verified Supabase access-token payload. */
-export interface VerifiedToken extends JWTPayload {
+/** A verified local access-token payload. */
+export interface VerifiedToken extends Record<string, unknown> {
   sub: string
   email?: string
+  iat?: number
+  exp?: number
 }
 
-const jwks = createRemoteJWKSet(new URL(env.SUPABASE_JWKS_URL))
-
-/** Verifies a Supabase-issued JWT against the project JWKS. Throws on invalid/expired tokens. */
-export async function verifySupabaseToken(token: string): Promise<VerifiedToken> {
-  const { payload } = await jwtVerify(token, jwks, {
-    issuer: `${env.SUPABASE_URL}/auth/v1`,
-    audience: 'authenticated',
+/** Verifies a local JWT signed with JWT_SECRET. Throws on invalid/expired tokens. */
+export async function verifyLocalToken(token: string): Promise<VerifiedToken> {
+  const secret = new TextEncoder().encode(env.JWT_SECRET)
+  const { payload } = await jwtVerify(token, secret, {
+    algorithms: ['HS256'],
   })
 
   if (typeof payload.sub !== 'string' || payload.sub.length === 0) {

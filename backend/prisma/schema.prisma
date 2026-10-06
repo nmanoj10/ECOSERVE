@@ -102,6 +102,9 @@ model User {
   role         Role       @default(DONOR)
   profileImage String?
   status       UserStatus @default(PENDING)
+  // Privacy (spec §9) — when false, the rescue sweep skips this user entirely:
+  // no location-based "food needs rescue" alerts for donors or volunteers.
+  locationAlertsEnabled Boolean  @default(true)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -216,6 +219,10 @@ model Donation {
   spoilageRisk     String? // LOW | MEDIUM | HIGH, AI-computed
   priority         Int? // 1–5 urgency, AI-computed
   rescueNotifiedAt DateTime? // set when the rescue job (Phase 19) alerted volunteers
+  // Phase 46 — highest urgency tier the rescue sweep has alerted for
+  // (NORMAL | INCREASED | URGENT | EMERGENCY). The sweep only re-alerts when
+  // the tier rises, so escalation ramps up as the food nears expiry.
+  rescuePriorityLevel String?
   // Phase 37 — reminder dedupe flags, set once each by jobs/reminderJob.ts so
   // periodic sweeps never re-remind the same people.
   pickupReminderSentAt   DateTime? // upcoming-pickup reminder fired
@@ -299,6 +306,12 @@ model Delivery {
   assignmentId          String         @unique
   pickupLocation        String
   dropLocation          String
+  // Phase 46 — chosen drop pin. For NGO runs these mirror the NGO's location;
+  // for rescue redistributions it's the distribution spot the volunteer picked
+  // (the NGO coords are absent on those runs). Used for the route map and the
+  // "volunteer approaching" alert.
+  dropLatitude          Float?
+  dropLongitude         Float?
   startedAt             DateTime?
   completedAt           DateTime?
   eta                   DateTime?

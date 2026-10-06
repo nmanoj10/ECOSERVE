@@ -224,7 +224,7 @@ export default function NgoDashboardPage() {
     }
   }
 
-  const firstName = profile?.fullName?.split(' ')[0] ?? user?.user_metadata?.full_name?.split(' ')[0] ?? 'there'
+  const firstName = profile?.fullName?.split(' ')[0] ?? user?.fullName?.split(' ')[0] ?? 'there'
   const ngo = profile?.ngo
   const coords =
     ngo?.latitude != null && ngo?.longitude != null

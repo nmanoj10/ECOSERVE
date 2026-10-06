@@ -252,7 +252,7 @@ export default function VolunteerDashboardPage() {
     }
   }
 
-  const firstName = profile?.fullName?.split(' ')[0] ?? user?.user_metadata?.full_name?.split(' ')[0] ?? 'there'
+  const firstName = profile?.fullName?.split(' ')[0] ?? user?.fullName?.split(' ')[0] ?? 'there'
   const assignment = dashboard?.currentAssignment ?? null
   const badge = availabilityBadge[availability]
   const timelineTypes = new Set(assignment?.timeline.map((entry) => entry.type) ?? [])

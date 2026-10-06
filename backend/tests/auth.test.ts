@@ -1,13 +1,14 @@
 /**
- * Phase 38, Step 96 — Authentication unit tests.
+ * Authentication unit tests (local JWT auth).
  *
- * Covers the JWT middleware chain (verifyToken / authRequired / authorize),
- * session token helpers, and the GoTrue refresh client.
+ * Covers the JWT middleware chain (verifyToken / localVerifyToken /
+ * authRequired / authorize), session token helpers, and the local
+ * refresh-token service (sessions-table backed, revocable).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SignJWT } from 'jose'
 
-import { verifySupabaseToken } from '../src/config/supabase.js'
+import { verifyLocalToken } from '../src/config/supabase.js'
 import { authRequired, verifyToken } from '../src/middleware/auth.js'
 import { authorize } from '../src/middleware/authorize.js'
 import {
@@ -19,23 +20,25 @@ import {
   revokeSession,
   tokenExpiry,
 } from '../src/services/sessionService.js'
-import { refreshWithGoTrue } from '../src/services/goTrueService.js'
+import { refreshLocalToken } from '../src/services/goTrueService.js'
+import { env } from '../src/config/env.js'
 import { HttpError } from '../src/utils/HttpError.js'
+import jwt from 'jsonwebtoken'
 
 const prismaMock = vi.hoisted(() => ({
   user: { findUnique: vi.fn() },
-  session: { deleteMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
+  session: { delete: vi.fn(), deleteMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
 }))
 
 vi.mock('../src/config/prisma.js', () => ({ prisma: prismaMock }))
 
 vi.mock('../src/config/supabase.js', () => ({
-  verifySupabaseToken: vi.fn(),
+  verifyLocalToken: vi.fn(),
 }))
 
 // The hoisted mock doubles as the assertion handle (keeps full vi.fn() types).
 const mockedPrisma = prismaMock
-const mockedVerify = vi.mocked(verifySupabaseToken)
+const mockedVerify = vi.mocked(verifyLocalToken)
 
 function makeReq(overrides: Record<string, unknown> = {}) {
   return {
@@ -310,95 +313,70 @@ describe('revokeSession', () => {
   })
 })
 
-describe('refreshWithGoTrue', () => {
-  const fetchMock = vi.fn()
-
+describe('refreshLocalToken', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('fetch', fetchMock)
   })
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
+  it('rejects with 401 REFRESH_TOKEN_REVOKED when the token has no session row', async () => {
+    mockedPrisma.session.findUnique.mockResolvedValue(null)
 
-  it('returns a token pair on a successful exchange', async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        access_token: 'new-access',
-        refresh_token: 'new-refresh',
-        expires_in: 3600,
-      }),
-    })
-
-    const pair = await refreshWithGoTrue('old-refresh-token')
-    expect(pair).toEqual({ accessToken: 'new-access', refreshToken: 'new-refresh', expiresIn: 3600 })
-  })
-
-  it('defaults expiresIn to 3600 when the field is missing', async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ access_token: 'a', refresh_token: 'r' }),
-    })
-
-    await expect(refreshWithGoTrue('old')).resolves.toMatchObject({ expiresIn: 3600 })
-  })
-
-  it('maps a 401 to INVALID_REFRESH_TOKEN with the upstream message', async () => {
-    fetchMock.mockResolvedValue({
-      ok: false,
+    await expect(refreshLocalToken('unknown-token')).rejects.toMatchObject({
       status: 401,
-      json: async () => ({ error_description: 'Token has expired' }),
-    })
-
-    await expect(refreshWithGoTrue('old')).rejects.toMatchObject({
-      status: 401,
-      code: 'INVALID_REFRESH_TOKEN',
-    })
-    await expect(refreshWithGoTrue('old')).rejects.toThrow('Token has expired')
-  })
-
-  it('maps a 429 to RATE_LIMITED', async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 429, json: async () => ({}) })
-
-    await expect(refreshWithGoTrue('old')).rejects.toMatchObject({ status: 429, code: 'RATE_LIMITED' })
-  })
-
-  it('maps an unexpected status to 502 UPSTREAM_ERROR', async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) })
-
-    await expect(refreshWithGoTrue('old')).rejects.toMatchObject({
-      status: 502,
-      code: 'UPSTREAM_ERROR',
+      code: 'REFRESH_TOKEN_REVOKED',
     })
   })
 
-  it('throws 502 when a 200 response is missing tokens', async () => {
-    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ foo: 'bar' }) })
+  it('rejects with 403 ACCOUNT_SUSPENDED and revokes the session for a suspended account', async () => {
+    mockedPrisma.session.findUnique.mockResolvedValue({ id: 's1', userId: 'u1' } as never)
+    mockedPrisma.user.findUnique.mockResolvedValue({ status: 'SUSPENDED' } as never)
 
-    await expect(refreshWithGoTrue('old')).rejects.toMatchObject({
-      status: 502,
-      code: 'UPSTREAM_ERROR',
+    await expect(refreshLocalToken('t')).rejects.toMatchObject({
+      status: 403,
+      code: 'ACCOUNT_SUSPENDED',
     })
+    expect(mockedPrisma.session.delete).toHaveBeenCalledWith({ where: { id: 's1' } })
   })
 
-  it('throws 502 when the response body is not JSON', async () => {
-    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => { throw new Error('bad json') } })
+  it('rotates the session and returns a signed HS256 access token on success', async () => {
+    mockedPrisma.session.findUnique.mockResolvedValue({ id: 's1', userId: 'u1' } as never)
+    mockedPrisma.user.findUnique.mockResolvedValue({ status: 'ACTIVE', email: 'a@b.com' } as never)
+    mockedPrisma.session.delete.mockResolvedValue({} as never)
+    mockedPrisma.session.create.mockResolvedValue({ id: 's2' } as never)
 
-    await expect(refreshWithGoTrue('old')).rejects.toMatchObject({
-      status: 502,
-      code: 'UPSTREAM_ERROR',
-    })
+    const pair = await refreshLocalToken('old-refresh-token')
+
+    // Rotation: old row consumed, new hash stored.
+    expect(mockedPrisma.session.delete).toHaveBeenCalledWith({ where: { id: 's1' } })
+    const createArgs = mockedPrisma.session.create.mock.calls[0]?.[0]
+    expect(createArgs?.data?.userId).toBe('u1')
+    expect(createArgs?.data?.refreshTokenHash).toMatch(/^[0-9a-f]{64}$/)
+
+    // The access token must be a real signed JWT the auth middleware accepts.
+    const claims = jwt.verify(pair.accessToken, env.JWT_SECRET, { algorithms: ['HS256'] }) as {
+      sub: string
+      email: string
+    }
+    expect(claims.sub).toBe('u1')
+    expect(claims.email).toBe('a@b.com')
+    expect(pair.refreshToken).toMatch(/^[0-9a-f-]{36}$/)
+    expect(pair.expiresIn).toBe(3600)
   })
 
-  it('throws HttpError subclasses that callers can catch', async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 401, json: async () => ({}) })
+  it('tolerates a concurrent refresh that already recorded the rotated token', async () => {
+    mockedPrisma.session.findUnique.mockResolvedValue({ id: 's1', userId: 'u1' } as never)
+    mockedPrisma.user.findUnique.mockResolvedValue({ status: 'ACTIVE', email: 'a@b.com' } as never)
+    mockedPrisma.session.delete.mockResolvedValue({} as never)
+    mockedPrisma.session.create.mockRejectedValue(new Error('Unique constraint failed on the fields: (`refreshTokenHash`)'))
+
+    await expect(refreshLocalToken('old-refresh-token')).resolves.toMatchObject({ expiresIn: 3600 })
+  })
+
+  it('maps unexpected errors through HttpError (subclasses catchable by callers)', async () => {
+    mockedPrisma.session.findUnique.mockRejectedValue(new HttpError(502, 'UPSTREAM_ERROR', 'boom'))
 
     try {
-      await refreshWithGoTrue('old')
+      await refreshLocalToken('old')
       expect.unreachable('should have thrown')
     } catch (err) {
       expect(err).toBeInstanceOf(HttpError)

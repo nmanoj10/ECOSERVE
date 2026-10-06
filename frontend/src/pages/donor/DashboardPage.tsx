@@ -296,7 +296,7 @@ export default function DonorDashboardPage() {
       ]
     : []
 
-  const firstName = profile?.fullName?.split(' ')[0] ?? user?.user_metadata?.full_name?.split(' ')[0] ?? 'there'
+  const firstName = profile?.fullName?.split(' ')[0] ?? user?.fullName?.split(' ')[0] ?? 'there'
   const insights = buildInsights(analytics, recentDonations)
   const pickupSteps = nextPickup ? pickupStepsFor(nextPickup.donation.status) : []
   const acceptedNgo = nextPickup?.detail?.requests?.find((r) => r.status === 'ACCEPTED')?.ngo?.ngoName

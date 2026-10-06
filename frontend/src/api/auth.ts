@@ -100,9 +100,10 @@ export async function fetchMe(): Promise<RegisterResponse> {
 
 /**
  * Exchanges a refresh token for a fresh access/refresh pair via the backend
- * (`POST /auth/refresh`). The axios interceptor deliberately uses supabase-js
- * `refreshSession()` instead, so the client session stays in sync; this wrapper
- * documents the server-side flow and serves non-browser clients.
+ * (`POST /v1/auth/refresh`). This wrapper documents the server-side flow and
+ * serves non-browser clients. The axios request interceptor (client.ts) handles
+ * token refresh automatically using the refresh token from localStorage, so
+ * callers typically don't need to use this directly.
  */
 export async function refreshAccessToken(refreshToken: string): Promise<RefreshResponse> {
   const { data } = await api.post<RefreshResponse>('/v1/auth/refresh', { refreshToken })
