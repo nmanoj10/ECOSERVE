@@ -177,6 +177,8 @@ export interface RescueSpot {
   longitude: number
   /** Straight-line distance from the pickup point, in km. */
   distanceKm: number
+  /** Estimated travel time from the pickup point (straight-line ÷ avg speed). */
+  travelTimeMinutes: number
   /** Google Maps link for directions. */
   mapsUrl: string
 }
@@ -211,4 +213,22 @@ export async function fetchRescueSpots(donationId?: string): Promise<RescueSpots
     params: donationId ? { donationId } : {},
   })
   return data
+}
+
+/**
+ * Phase 46 — POST /v1/volunteer/rescue-claim.
+ *
+ * A volunteer accepts a rescue alert: the backend creates the assignment +
+ * delivery run (flipping the donation to RESERVED) so pickup, live tracking and
+ * completion work exactly like an NGO delivery. `distributionSpot` defaults to
+ * the nearest handout spot when omitted.
+ */
+export async function claimRescue(
+  donationId: string,
+  distributionSpot?: { name: string; latitude: number; longitude: number },
+): Promise<void> {
+  await api.post('/v1/volunteer/rescue-claim', {
+    donationId,
+    ...(distributionSpot ? { distributionSpot } : {}),
+  })
 }

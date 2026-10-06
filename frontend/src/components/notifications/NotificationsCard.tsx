@@ -12,6 +12,7 @@ import {
   type NotificationItem,
 } from '@/api/notifications'
 import { timeAgo } from '@/components/layout/DashboardShell'
+import { MessageWithLinks } from '@/components/notifications/MessageWithLinks'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -212,11 +213,18 @@ export default function NotificationsCard({ limit = 5, role }: { limit?: number;
               const showDeliveryAction = role === 'VOLUNTEER' && notification.type === 'NEEDED' && Boolean(notification.donationId)
               return (
                 <li key={notification.id} className="rounded-xl p-2 transition hover:bg-neutral-50">
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => handleMarkRead(notification)}
+                    onKeyDown={(e) => {
+                      if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                        e.preventDefault()
+                        handleMarkRead(notification)
+                      }
+                    }}
                     aria-label={`${notification.title}${notification.isRead ? '' : ' — unread'}`}
-                    className="flex w-full items-start gap-3 text-left"
+                    className="flex w-full cursor-pointer items-start gap-3 text-left"
                   >
                     <span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg ${classes}`}>
                       <Icon className="size-4" />
@@ -233,11 +241,11 @@ export default function NotificationsCard({ limit = 5, role }: { limit?: number;
                       <span
                         className={`mt-0.5 block text-xs leading-relaxed ${notification.isRead ? 'text-neutral-400' : 'text-neutral-500'}`}
                       >
-                        {notification.message}
+                        <MessageWithLinks message={notification.message} />
                       </span>
                       <span className="mt-0.5 block text-[11px] text-neutral-400">{timeAgo(notification.createdAt)}</span>
                     </span>
-                  </button>
+                  </div>
                   {showRescueAction && (
                     <span className="mt-1 flex justify-end pr-0.5">
                       <button

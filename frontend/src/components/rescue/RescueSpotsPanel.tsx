@@ -1,10 +1,13 @@
-import { Clock, HandHeart, MapPin, Navigation } from 'lucide-react'
+import { Clock, HandHeart, Loader2, MapPin, Navigation } from 'lucide-react'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
-import type { RescueSpot, RescueSpotsResponse } from '@/api/volunteer'
+import { claimRescue, type RescueSpot, type RescueSpotsResponse } from '@/api/volunteer'
 import { RescueSpotsMap, SPOT_EMOJI } from '@/components/maps/RescueSpotsMap'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { useToast } from '@/components/ui/Toast'
 
 const SPOT_TONE: Record<RescueSpot['type'], string> = {
   railway_station: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
@@ -22,26 +25,55 @@ const LEGEND: Array<{ type: RescueSpot['type']; label: string }> = [
   { type: 'community_centre', label: 'Community centre' },
 ]
 
-/** \"2026-08-12T12:00:00Z\" → \"3h left\" / \"Expiring now\". */
-function expiryLabel(expiryTime: string | null): string | null {
-  if (!expiryTime) return null
-  const hours = Math.max(0, Math.round((new Date(expiryTime).getTime() - Date.now()) / 3_600_000))
-  return hours === 0 ? 'Expiring now' : `${hours}h left`
+/** Urgency badge by hours remaining, mirroring the backend's RESCUE tiers. */
+function urgencyBadge(expiryTime: string | null): { label: string; className: string } {
+  if (!expiryTime) return { label: 'Rescue mission', className: 'bg-amber-500' }
+  const hours = Math.max(0, (new Date(expiryTime).getTime() - Date.now()) / 3_600_000)
+  if (hours < 1) return { label: '⛔ EMERGENCY — act now', className: 'bg-red-600' }
+  if (hours < 3) return { label: '🚨 Urgent', className: 'bg-red-500' }
+  if (hours < 6) return { label: '⚡ In the next few hours', className: 'bg-amber-500' }
+  return { label: 'ℹ️ Normal priority', className: 'bg-neutral-500' }
 }
 
 /**
- * Phase 45 — the rescue mission card shown on the volunteer dashboard after a
- * rescue alert is accepted: the donor pickup location, the nearby railway
- * stations / bus stands / homeless-gathering spots, and each spot's address
- * with a direct Google Maps link so the volunteer can go pick up and hand out.
+ * Phase 45/46 — the rescue mission card shown on the volunteer dashboard after a
+ * rescue alert is accepted (or before: the claim button turns it into a real
+ * assignment with live tracking): the donor pickup location, the nearby railway
+ * stations / bus stands / homeless-gathering spots, each spot's address + travel
+ * time with a direct Google Maps link, and — while the donation is still
+ * AVAILABLE — a "Claim this rescue" action that takes responsibility for the
+ * redistribution.
  */
 export default function RescueSpotsPanel({ data }: { data: RescueSpotsResponse }) {
   const { donation, pickup, pickupMapsUrl, spots } = data
+  const navigate = useNavigate()
+  const { toast } = useToast()
+  const [claiming, setClaiming] = useState(false)
+
+  const claimable = donation != null && donation.status === 'AVAILABLE'
+  const urgency = urgencyBadge(donation?.expiryTime ?? null)
+  const nearest = spots[0]
+
+  const onClaim = async () => {
+    if (!donation) return
+    setClaiming(true)
+    try {
+      await claimRescue(donation.id, nearest ? { name: nearest.name, latitude: nearest.latitude, longitude: nearest.longitude } : undefined)
+      toast({ title: 'Rescue claimed', description: 'Pickup, live tracking and hand-out are now active on your dashboard.', variant: 'success' })
+      // No query param → the dashboard anchors the panel on the new assignment.
+      navigate('/volunteer')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not claim the rescue'
+      toast({ title: 'Claim failed', description: message, variant: 'error' })
+    } finally {
+      setClaiming(false)
+    }
+  }
 
   return (
     <Card id="rescue-panel" className="mt-6 overflow-hidden">
       <CardHeader className="border-b border-neutral-100 bg-gradient-to-r from-amber-50 via-white to-white">
-        <div>
+        <div className="flex w-full items-start justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="flex size-9 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
               <HandHeart className="size-5" />
@@ -49,17 +81,19 @@ export default function RescueSpotsPanel({ data }: { data: RescueSpotsResponse }
             <div>
               <CardTitle>Rescue &amp; handout spots</CardTitle>
               <CardDescription>
-                Where to pick up the food and hand it out nearby — people in need gather at these places
+                Pick up the food, choose a spot, and hand it out nearby — people in need often gather at these places
               </CardDescription>
             </div>
           </div>
+          {donation && (
+            <span
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white ${urgency.className}`}
+            >
+              <Clock className="size-3" />
+              {urgency.label}
+            </span>
+          )}
         </div>
-        {donation && (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-white">
-            <Clock className="size-3" />
-            {expiryLabel(donation.expiryTime) ?? 'Rescue mission'}
-          </span>
-        )}
       </CardHeader>
 
       <CardContent className="pt-5">
@@ -87,6 +121,19 @@ export default function RescueSpotsPanel({ data }: { data: RescueSpotsResponse }
           </div>
         )}
 
+        {/* Phase 46 — take responsibility for the redistribution. */}
+        {claimable && (
+          <button
+            type="button"
+            onClick={onClaim}
+            disabled={claiming}
+            className="mb-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {claiming ? <Loader2 className="size-4 animate-spin" /> : <HandHeart className="size-4" />}
+            {claiming ? 'Claiming this rescue…' : 'Claim this rescue & redistribute the food'}
+          </button>
+        )}
+
         {!pickup ? (
           <EmptyState
             icon={MapPin}
@@ -98,7 +145,7 @@ export default function RescueSpotsPanel({ data }: { data: RescueSpotsResponse }
           <EmptyState
             icon={MapPin}
             title="No handout spots found nearby"
-            description="We couldn't find railway stations, bus stands or shelters within 5 km. Try opening the pickup address in Google Maps to scout the area."
+            description="We couldn't find railway stations, bus stands or shelters near this pickup. Try opening the pickup address in Google Maps to scout the area."
             className="py-10"
           />
         ) : (
@@ -120,7 +167,7 @@ export default function RescueSpotsPanel({ data }: { data: RescueSpotsResponse }
               </div>
             </div>
 
-            {/* Spot list with addresses */}
+            {/* Spot list with addresses + travel time */}
             <div className="lg:col-span-2">
               <ul className="max-h-[24rem] space-y-2 overflow-y-auto pr-1">
                 {spots.map((spot) => (
@@ -133,11 +180,15 @@ export default function RescueSpotsPanel({ data }: { data: RescueSpotsResponse }
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <p className="truncate text-sm font-semibold text-neutral-900">{spot.name}</p>
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${SPOT_TONE[spot.type]}`}>
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${SPOT_TONE[spot.type]}`}
+                          >
                             {spot.label}
                           </span>
                         </div>
-                        <p className="mt-0.5 text-xs text-neutral-500">{spot.distanceKm} km from pickup</p>
+                        <p className="mt-0.5 text-xs text-neutral-500">
+                          {spot.distanceKm} km from pickup · ~{spot.travelTimeMinutes} min
+                        </p>
                         <p className="mt-1 text-xs leading-relaxed text-neutral-600">
                           {spot.address ?? 'Address not mapped — use directions below'}
                         </p>

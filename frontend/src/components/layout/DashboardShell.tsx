@@ -5,7 +5,6 @@ import { Bell, CheckCheck, ChevronsUpDown, LayoutDashboard, Leaf, LogOut, Menu, 
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import type { Socket } from 'socket.io-client'
 
-import { logout } from '@/api/auth'
 import {
   deleteNotification,
   fetchNotifications,
@@ -16,9 +15,10 @@ import {
 import { Avatar } from '@/components/ui/Avatar'
 import { Button } from '@/components/ui/Button'
 import { Dropdown, DropdownContent, DropdownItem, DropdownSeparator, DropdownTrigger } from '@/components/ui/Dropdown'
+import { MessageWithLinks } from '@/components/notifications/MessageWithLinks'
 import { useAuth } from '@/hooks/useAuth'
 import { connectSocket, disconnectSocket } from '@/services/socket'
-import { supabase } from '@/services/supabase'
+import { logout as localLogout } from '@/services/local-auth'
 
 export interface DashboardNavItem {
   label: string
@@ -57,18 +57,14 @@ export default function DashboardShell({ roleLabel, nav, title, subtitle, childr
   }, [title])
 
   const displayName =
-    (user?.user_metadata?.full_name as string | undefined) ??
+    user?.fullName ??
     user?.email?.split('@')[0] ??
     'Ecoserve user'
   const email = user?.email ?? ''
 
   const handleSignOut = async () => {
-    const { data } = await supabase.auth.getSession()
-    const refreshToken = data.session?.refresh_token
-    await supabase.auth.signOut()
-    if (refreshToken) {
-      logout(refreshToken).catch(() => {})
-    }
+    // Use local logout function which clears tokens from localStorage
+    await localLogout()
     navigate('/')
   }
 
@@ -275,10 +271,17 @@ export default function DashboardShell({ roleLabel, nav, title, subtitle, childr
                     <ul className="space-y-0.5 p-1.5">
                       {notifications.map((notification) => (
                         <li key={notification.id} className="group relative">
-                          <button
-                            type="button"
+                          <div
+                            role="button"
+                            tabIndex={0}
                             onClick={() => handleMarkRead(notification)}
-                            className={`w-full rounded-lg p-2.5 pr-8 text-left transition hover:bg-neutral-50 ${
+                            onKeyDown={(e) => {
+                              if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                                e.preventDefault()
+                                handleMarkRead(notification)
+                              }
+                            }}
+                            className={`w-full cursor-pointer rounded-lg p-2.5 pr-8 text-left transition hover:bg-neutral-50 ${
                               notification.isRead ? 'opacity-70' : ''
                             }`}
                           >
@@ -294,11 +297,13 @@ export default function DashboardShell({ roleLabel, nav, title, subtitle, childr
                                 >
                                   {notification.title}
                                 </p>
-                                <p className="mt-0.5 text-xs leading-relaxed text-neutral-500">{notification.message}</p>
+                                <p className="mt-0.5 text-xs leading-relaxed text-neutral-500">
+                                  <MessageWithLinks message={notification.message} />
+                                </p>
                                 <p className="mt-1 text-[11px] text-neutral-400">{timeAgo(notification.createdAt)}</p>
                               </div>
                             </div>
-                          </button>
+                          </div>
                           <button
                             type="button"
                             onClick={() => handleDelete(notification)}

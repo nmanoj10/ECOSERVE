@@ -8,6 +8,7 @@ import { fetchMe } from '@/api/auth'
 import { updateDonorProfile } from '@/api/donor'
 import DashboardShell from '@/components/layout/DashboardShell'
 import { LocationPinMap } from '@/components/maps/LocationPinMap'
+import { RescueAlertsToggleCard } from '@/components/preferences/RescueAlertsToggleCard'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { ErrorState } from '@/components/ui/ErrorState'
@@ -71,6 +72,7 @@ export default function DonorProfilePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [alertsEnabled, setAlertsEnabled] = useState(true)
   const geo = useGeolocation()
 
   const {
@@ -116,6 +118,7 @@ export default function DonorProfilePage() {
         return
       }
       setProfile(user.donor)
+      setAlertsEnabled(user.locationAlertsEnabled ?? true)
       reset(toFormValues(user.donor))
     } catch (err) {
       setError(
@@ -323,6 +326,9 @@ export default function DonorProfilePage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Phase 46 — privacy opt-out for location-based rescue alerts (spec §9). */}
+        <RescueAlertsToggleCard enabled={alertsEnabled} />
 
         <Card>
           <CardHeader>

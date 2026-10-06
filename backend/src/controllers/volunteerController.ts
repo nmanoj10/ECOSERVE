@@ -1,8 +1,12 @@
 import type { Request, Response } from 'express'
 
 import { prisma } from '../config/prisma.js'
+import { env } from '../config/env.js'
 import { findNearbyTransitPoints } from '../services/transitService.js'
+import { notifyUsers, NOTIFICATION_TYPES } from '../services/notificationService.js'
+import { AVG_SPEED_KMH, ROAD_FACTOR, vehicleCapacityKg } from '../services/recommendationService.js'
 import { HttpError } from '../utils/HttpError.js'
+import { haversineKm } from '../utils/geo.js'
 import { estimateMeals } from '../utils/meals.js'
 import type { UpdateAvailabilityBody, UpdateVolunteerProfileBody } from '../validators/volunteer.js'
 
@@ -26,13 +30,22 @@ function pickupCoords(donation: {
   return latitude != null && longitude != null ? { latitude, longitude } : null
 }
 
-/** Coordinates for the drop end: the latest GPS sample, else the accepting NGO. */
+/** Coordinates for the drop end: the latest GPS sample, else the delivery's
+ *  chosen drop pin (rescue redistributions have no NGO), else the NGO. */
 function dropCoords(assignment: {
-  delivery: { locations: Array<{ latitude: number; longitude: number }> } | null
+  delivery: {
+    locations: Array<{ latitude: number; longitude: number }>
+    dropLatitude: number | null
+    dropLongitude: number | null
+  } | null
   donation: { requests: Array<{ ngo: { latitude: number | null; longitude: number | null } }> }
 }): { latitude: number; longitude: number } | null {
   const latest = assignment.delivery?.locations[0]
   if (latest) return { latitude: latest.latitude, longitude: latest.longitude }
+
+  if (assignment.delivery?.dropLatitude != null && assignment.delivery.dropLongitude != null) {
+    return { latitude: assignment.delivery.dropLatitude, longitude: assignment.delivery.dropLongitude }
+  }
 
   const ngo = assignment.donation.requests[0]?.ngo
   if (ngo?.latitude != null && ngo?.longitude != null) return { latitude: ngo.latitude, longitude: ngo.longitude }
@@ -312,7 +325,9 @@ export async function rescueSpots(req: Request, res: Response): Promise<void> {
   }
 
   // Best-effort — Overpass outages degrade to an empty spot list, never an error.
-  const spots = await findNearbyTransitPoints(dLat, dLng, 5000, 10).catch(() => [])
+  // Radius is env-tunable (RESCUE_SPOT_RADIUS_KM) and shared with the rescue
+  // alert sweep, so map and message always agree on "nearby".
+  const spots = await findNearbyTransitPoints(dLat, dLng, env.RESCUE_SPOT_RADIUS_KM * 1000, 10).catch(() => [])
 
   res.json({
     donation: {
@@ -332,4 +347,148 @@ export async function rescueSpots(req: Request, res: Response): Promise<void> {
       mapsUrl: `https://maps.google.com/?q=${spot.latitude.toFixed(5)},${spot.longitude.toFixed(5)}`,
     })),
   })
+}
+
+/**
+ * Phase 46 — POST /api/v1/volunteer/rescue-claim.
+ *
+ * A volunteer accepts a rescue alert and takes responsibility for the
+ * redistribution: pickup at the donor, hand the food out at the distribution
+ * spot they chose (the nearest known spot when no `distributionSpot` is sent).
+ *
+ * One transaction reuses the standard assignment/delivery machinery so live
+ * GPS tracking, pickup and complete all work for rescue runs, and the donation
+ * flips to RESERVED (via an atomic AVAILABLE-update guard) so the rescue sweep
+ * and any NGO claim can no longer target it. Pending NGO requests are
+ * cancelled — the donor decided the volunteer route.
+ */
+export async function rescueClaim(req: Request, res: Response): Promise<void> {
+  const user = req.user!
+  const body = (req.body ?? {}) as {
+    donationId?: unknown
+    distributionSpot?: { name?: unknown; latitude?: unknown; longitude?: unknown } | null
+  }
+  const donationId = typeof body.donationId === 'string' ? body.donationId.trim() : ''
+  if (!donationId) {
+    throw new HttpError(400, 'VALIDATION', 'donationId is required')
+  }
+  const spotValid =
+    body.distributionSpot != null &&
+    typeof body.distributionSpot.name === 'string' &&
+    typeof body.distributionSpot.latitude === 'number' &&
+    typeof body.distributionSpot.longitude === 'number'
+
+  const volunteer = await prisma.volunteer.findUnique({
+    where: { userId: user.userId },
+    include: { user: { select: { fullName: true } } },
+  })
+  if (!volunteer) {
+    throw new HttpError(409, 'PROFILE_INCOMPLETE', 'Volunteer profile not found — complete registration first')
+  }
+
+  const donation = await prisma.donation.findUnique({
+    where: { id: donationId },
+    include: {
+      donor: { select: { userId: true, organizationName: true, latitude: true, longitude: true } },
+      requests: { where: { status: 'ACCEPTED' }, take: 1, select: { id: true } },
+    },
+  })
+  if (!donation) {
+    throw new HttpError(404, 'NOT_FOUND', 'Donation not found')
+  }
+  if (donation.status !== 'AVAILABLE') {
+    throw new HttpError(409, 'NOT_AVAILABLE', 'This donation is no longer available for rescue')
+  }
+
+  // Same vehicle-capacity rule as the NGO delivery flow — a bike can't carry 200 kg.
+  if (donation.unit === 'kg' && donation.quantity > vehicleCapacityKg(volunteer.vehicleType)) {
+    throw new HttpError(409, 'VEHICLE_CAPACITY', 'Your vehicle cannot carry this quantity')
+  }
+
+  const pickupLat = donation.latitude ?? donation.donor.latitude
+  const pickupLng = donation.longitude ?? donation.donor.longitude
+  if (pickupLat == null || pickupLng == null) {
+    throw new HttpError(409, 'NO_LOCATION', 'This donation has no location pin — the donor must add one first')
+  }
+
+  // Drop: the volunteer's chosen distribution spot, else the pickup point
+  // (hand out "near the donor" and pick an exact spot on arrival).
+  const dropLat = spotValid ? (body.distributionSpot!.latitude as number) : pickupLat
+  const dropLng = spotValid ? (body.distributionSpot!.longitude as number) : pickupLng
+  const dropLocation = spotValid ? (body.distributionSpot!.name as string) : `Near ${donation.pickupAddress}`
+
+  // Distance + ETA from the volunteer's location to the pickup point (same
+  // budget heuristic as assignmentController).
+  const distanceKm =
+    volunteer.currentLatitude != null && volunteer.currentLongitude != null
+      ? Math.round(haversineKm(pickupLat, pickupLng, volunteer.currentLatitude, volunteer.currentLongitude) * 100) / 100
+      : null
+  const etaMinutes = distanceKm != null ? Math.round((distanceKm * ROAD_FACTOR * 60) / AVG_SPEED_KMH) : null
+
+  let result
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      // Atomic claim — the AVAILABLE-update guard is the single source of
+      // truth against a concurrent NGO claim or another volunteer.
+      const claimed = await tx.donation.updateMany({
+        where: { id: donationId, status: 'AVAILABLE' },
+        data: { status: 'RESERVED', rescueNotifiedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        throw new HttpError(409, 'NOT_AVAILABLE', 'This donation has already been claimed')
+      }
+      // The donor's final call was the volunteer route — clear pending NGO offers.
+      await tx.ngoRequest.updateMany({
+        where: { donationId, status: 'PENDING' },
+        data: { status: 'CANCELLED' },
+      })
+
+      const assignment = await tx.volunteerAssignment.create({
+        data: { volunteerId: volunteer.id, donationId, status: 'ACCEPTED', acceptedAt: new Date() },
+      })
+      const delivery = await tx.delivery.create({
+        data: {
+          assignmentId: assignment.id,
+          pickupLocation: donation.pickupAddress,
+          dropLocation,
+          dropLatitude: dropLat,
+          dropLongitude: dropLng,
+          eta: etaMinutes != null ? new Date(Date.now() + etaMinutes * 60_000) : null,
+          distance: distanceKm,
+          status: 'VOLUNTEER_ASSIGNED',
+        },
+      })
+      await tx.volunteer.update({ where: { id: volunteer.id }, data: { availability: 'BUSY' } })
+      await tx.auditLog.create({
+        data: { userId: user.userId, action: 'rescue.claimed', entity: 'donation', entityId: donationId },
+      })
+      return { assignment, delivery }
+    })
+  } catch (err) {
+    // Unique constraint on VolunteerAssignment.donationId — two volunteers
+    // claiming the same donation concurrently.
+    if ((err as { code?: string }).code === 'P2002') {
+      throw new HttpError(409, 'ALREADY_CLAIMED', 'Another volunteer already claimed this rescue')
+    }
+    throw err
+  }
+
+  // Notify the donor and the volunteer themselves so both dashboards update.
+  const donorMessage = `${volunteer.user.fullName} is picking up your ${donation.foodName} and handing it out${
+    spotValid ? ` at ${dropLocation}` : ' nearby'
+  } — you can follow their live location during the run.`
+  await notifyUsers([donation.donor.userId], {
+    title: `Rescue accepted: ${donation.foodName}`,
+    message: donorMessage,
+    type: NOTIFICATION_TYPES.VOLUNTEER_ASSIGNED,
+    donationId: donation.id,
+  })
+  await notifyUsers([volunteer.userId], {
+    title: `Rescue claimed: ${donation.foodName}`,
+    message: `You're redistributing ${donation.foodName} from ${donation.donor.organizationName} at ${donation.pickupAddress}. Start the pickup when you arrive — live tracking begins automatically.`,
+    type: NOTIFICATION_TYPES.VOLUNTEER_ASSIGNED,
+    donationId: donation.id,
+  })
+
+  res.status(201).json({ assignment: result.assignment, delivery: result.delivery })
 }

@@ -120,19 +120,19 @@ export async function startDelivery(req: Request, res: Response): Promise<void> 
     title: `In transit: ${donation.foodName}`,
     message:
       `${assignment.volunteer.user.fullName} is delivering ${donation.foodName} ` +
-      `to ${ngo?.ngoName ?? 'the NGO'}.`,
+      `to ${ngo?.ngoName ?? delivery.dropLocation}.`,
     type: NOTIFICATION_TYPES.DELIVERY_STARTED,
     donationId: donation.id,
   })
   await notifyUsers([user.userId], {
     title: `Pickup started: ${donation.foodName}`,
-    message: `You picked up ${donation.foodName} from ${donation.donor.organizationName}. Head to ${ngo?.ngoName ?? 'the NGO'}.`,
+    message: `You picked up ${donation.foodName} from ${donation.donor.organizationName}. Head to ${ngo?.ngoName ?? delivery.dropLocation}.`,
     type: NOTIFICATION_TYPES.PICKUP_STARTED,
     donationId: donation.id,
   })
   await notifyUsers([user.userId], {
     title: `In transit: ${donation.foodName}`,
-    message: `You're delivering ${donation.foodName} to ${ngo?.ngoName ?? 'the NGO'}. Drive safe!`,
+    message: `You're delivering ${donation.foodName} to ${ngo?.ngoName ?? delivery.dropLocation}. Drive safe!`,
     type: NOTIFICATION_TYPES.DELIVERY_STARTED,
     donationId: donation.id,
   })
@@ -242,7 +242,14 @@ export async function submitLocation(req: Request, res: Response): Promise<void>
   // volunteer's live position is treated identically on either channel.
   if (assignment) {
     await maybeNotifyApproaching(
-      { id: delivery.id, approachingNotifiedAt: delivery.approachingNotifiedAt, assignment },
+      {
+        id: delivery.id,
+        approachingNotifiedAt: delivery.approachingNotifiedAt,
+        dropLatitude: delivery.dropLatitude,
+        dropLongitude: delivery.dropLongitude,
+        dropLocation: delivery.dropLocation,
+        assignment,
+      },
       body.latitude,
       body.longitude,
     )
@@ -335,8 +342,9 @@ export async function listActiveDeliveries(req: Request, res: Response): Promise
         longitude: donation.longitude ?? donation.donor.longitude ?? 0,
       },
       drop: {
-        latitude: ngo?.latitude ?? 0,
-        longitude: ngo?.longitude ?? 0,
+        // Rescue runs have no NGO — fall back to the distribution spot pin.
+        latitude: ngo?.latitude ?? d.dropLatitude ?? 0,
+        longitude: ngo?.longitude ?? d.dropLongitude ?? 0,
       },
       volunteerName: assignment.volunteer?.user.fullName ?? null,
     }
@@ -435,13 +443,13 @@ export async function completeDelivery(req: Request, res: Response): Promise<voi
     title: `Delivery completed: ${donation.foodName}`,
     message:
       `${assignment.volunteer.user.fullName} delivered ${donation.foodName} to ` +
-      `${ngo?.ngoName ?? 'the NGO'}. Thank you for saving food!`,
+      `${ngo?.ngoName ?? delivery.dropLocation}. Thank you for saving food!`,
     type: NOTIFICATION_TYPES.DELIVERY_COMPLETED,
     donationId: donation.id,
   })
   await notifyUsers([user.userId], {
     title: `Delivery completed: ${donation.foodName}`,
-    message: `You delivered ${donation.foodName} to ${ngo?.ngoName ?? 'the NGO'}. Great job saving food!`,
+    message: `You delivered ${donation.foodName} to ${ngo?.ngoName ?? delivery.dropLocation}. Great job saving food!`,
     type: NOTIFICATION_TYPES.DELIVERY_COMPLETED,
     donationId: donation.id,
   })

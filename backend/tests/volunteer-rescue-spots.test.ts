@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { rescueSpots } from '../src/controllers/volunteerController.js'
 import { findNearbyTransitPoints } from '../src/services/transitService.js'
+import { env } from '../src/config/env.js'
 
 const prismaMock = vi.hoisted(() => ({
   volunteer: { findUnique: vi.fn() },
@@ -92,7 +93,7 @@ describe('rescueSpots', () => {
 
     await rescueSpots(req as never, res as never)
 
-    expect(mockedTransit).toHaveBeenCalledWith(12.9716, 77.5946, 5000, 10)
+    expect(mockedTransit).toHaveBeenCalledWith(12.9716, 77.5946, env.RESCUE_SPOT_RADIUS_KM * 1000, 10)
     expect(res.json).toHaveBeenCalledWith({
       donation: expect.objectContaining({ id: 'don-1', foodName: 'Biryani', donorOrganization: 'Spice House' }),
       pickup: { latitude: 12.9716, longitude: 77.5946 },
@@ -116,7 +117,7 @@ describe('rescueSpots', () => {
     const req = makeReq({ query: { donationId: 'don-1' } })
     await rescueSpots(req as never, makeRes() as never)
 
-    expect(mockedTransit).toHaveBeenCalledWith(12.9, 77.6, 5000, 10)
+    expect(mockedTransit).toHaveBeenCalledWith(12.9, 77.6, env.RESCUE_SPOT_RADIUS_KM * 1000, 10)
   })
 
   it('anchors on the current active assignment when no donationId is given', async () => {

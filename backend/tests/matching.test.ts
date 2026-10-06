@@ -204,17 +204,32 @@ describe('runRescueCheck', () => {
       quantity: 10,
       unit: 'kg',
       status: 'AVAILABLE',
-      expiryTime: new Date(now + 2 * 3_600_000), // 2h left — inside the 3h window
+      expiryTime: new Date(now + 2 * 3_600_000), // 2h left — URGENT tier
       rescueNotifiedAt: null,
+      rescuePriorityLevel: null,
       latitude: 12.95,
       longitude: 77.58,
-      donor: { userId: 'donor-1', organizationName: 'Spice House', latitude: null, longitude: null },
+      pickupAddress: 'Church Street, Bengaluru',
+      donor: {
+        userId: 'donor-1',
+        organizationName: 'Spice House',
+        city: 'Bengaluru',
+        latitude: null,
+        longitude: null,
+        user: { locationAlertsEnabled: true },
+      },
       ...over,
     }
   }
 
   function volunteerRow(over: Record<string, unknown> = {}) {
-    return { userId: 'vol-1', currentLatitude: 12.96, currentLongitude: 77.59, ...over }
+    return {
+      userId: 'vol-1',
+      currentLatitude: 12.96,
+      currentLongitude: 77.59,
+      user: { locationAlertsEnabled: true },
+      ...over,
+    }
   }
 
   beforeEach(() => {
@@ -257,15 +272,17 @@ describe('runRescueCheck', () => {
     expect(ownerCall[2]).toBeDefined() // transaction client passed through
   })
 
-  it('queries the rescue window and the notified-once flag', async () => {
+  it('queries the rescue window and excludes donations already at the top tier', async () => {
     mockedPrisma.donation.findMany.mockResolvedValue([] as never)
 
     await runRescueCheck()
 
     const where = mockedPrisma.donation.findMany.mock.calls[0]?.[0]?.where
-    expect(where).toMatchObject({ status: 'AVAILABLE', rescueNotifiedAt: null })
+    expect(where).toMatchObject({ status: 'AVAILABLE' })
     expect(where.expiryTime.gte).toBeInstanceOf(Date) // 30-min grace into the past
-    expect(where.expiryTime.lte).toBeInstanceOf(Date) // 3h ahead
+    expect(where.expiryTime.lte).toBeInstanceOf(Date) // 6h ahead
+    // Never re-alert EMERGENCY rows; everything else is escalated per-row in JS.
+    expect(where.OR).toEqual([{ rescuePriorityLevel: null }, { rescuePriorityLevel: { not: 'EMERGENCY' } }])
   })
 
   it('notifies only the owner when the donation has no coordinates', async () => {
@@ -292,17 +309,26 @@ describe('runRescueCheck', () => {
     expect(mockedNotify.mock.calls[0]![0]).toEqual(['donor-1'])
   })
 
-  it('includes nearby transit spots in the notification text', async () => {
+  it('includes nearby transit spots with distance and travel time in the notification text', async () => {
     mockedPrisma.donation.findMany.mockResolvedValue([donationRow()] as never)
     mockedPrisma.volunteer.findMany.mockResolvedValue([volunteerRow()] as never)
     mockedTransit.mockResolvedValue([
-      { name: 'Central Station', label: 'railway station', type: 'railway_station', latitude: 12.95, longitude: 77.58, distanceKm: 1.2 },
+      {
+        name: 'Central Station',
+        label: 'railway station',
+        type: 'railway_station',
+        latitude: 12.95,
+        longitude: 77.58,
+        distanceKm: 1.2,
+        travelTimeMinutes: 5,
+      },
     ] as never)
 
     await runRescueCheck()
 
     const rescuerMessage = mockedNotify.mock.calls[1]![1].message
-    expect(rescuerMessage).toContain('Central Station (railway station, 1.2 km)')
+    expect(rescuerMessage).toContain('Central Station (railway station, 1.2 km, ~5 min)')
+    expect(rescuerMessage).toContain('Map: https://maps.google.com/?q=12.95000,77.58000')
   })
 
   it('degrades gracefully when the transit lookup fails', async () => {
@@ -316,7 +342,7 @@ describe('runRescueCheck', () => {
     expect(mockedNotify.mock.calls[1]![1].message).toContain('near the donation')
   })
 
-  it('writes rescueNotifiedAt inside the same transaction (once-guarantee)', async () => {
+  it('writes rescueNotifiedAt and the alerted tier inside the same transaction', async () => {
     mockedPrisma.donation.findMany.mockResolvedValue([donationRow()] as never)
     mockedPrisma.volunteer.findMany.mockResolvedValue([volunteerRow()] as never)
     let capturedUpdate: ((...args: never[]) => unknown) | undefined
@@ -333,19 +359,81 @@ describe('runRescueCheck', () => {
 
     expect(capturedUpdate).toHaveBeenCalledWith({
       where: { id: 'don-1' },
-      data: { rescueNotifiedAt: expect.any(Date) },
+      data: { rescueNotifiedAt: expect.any(Date), rescuePriorityLevel: 'URGENT' },
     })
   })
 
-  it('does not re-alert: the sweep query itself filters rescueNotifiedAt: null', async () => {
+  it('escalates: re-alerts when the tier rises (2h left is more urgent than the stored 3–6h tier)', async () => {
+    mockedPrisma.donation.findMany.mockResolvedValue([
+      donationRow({ rescuePriorityLevel: 'INCREASED' }), // 2h left → URGENT > INCREASED
+    ] as never)
+    mockedPrisma.volunteer.findMany.mockResolvedValue([volunteerRow()] as never)
+
+    const summary = await runRescueCheck()
+
+    expect(summary).toEqual({ scanned: 1, rescued: 1, notificationsSent: 4 })
+    expect(mockedNotify.mock.calls[0]![1].title).toContain('(urgent)')
+  })
+
+  it('does not re-alert at the same tier (URGENT already alerted)', async () => {
+    mockedPrisma.donation.findMany.mockResolvedValue([
+      donationRow({ rescuePriorityLevel: 'URGENT' }), // 2h left → still URGENT
+    ] as never)
+    mockedPrisma.volunteer.findMany.mockResolvedValue([volunteerRow()] as never)
+
+    const summary = await runRescueCheck()
+
+    expect(summary).toEqual({ scanned: 1, rescued: 0, notificationsSent: 0 })
+    expect(mockedNotify).not.toHaveBeenCalled()
+  })
+
+  it('never re-alerts a donation that already reached EMERGENCY', async () => {
+    mockedPrisma.donation.findMany.mockResolvedValue([
+      donationRow({ rescuePriorityLevel: 'EMERGENCY', expiryTime: new Date(now + 30 * 60_000) }),
+    ] as never)
+
+    const summary = await runRescueCheck()
+
+    expect(summary).toEqual({ scanned: 1, rescued: 0, notificationsSent: 0 })
+  })
+
+  it('skips the owner who opted out of location-based alerts (volunteers still get it)', async () => {
+    mockedPrisma.donation.findMany.mockResolvedValue([
+      donationRow({ donor: { userId: 'donor-1', organizationName: 'Spice House', city: 'Bengaluru', latitude: null, longitude: null, user: { locationAlertsEnabled: false } } }),
+    ] as never)
+    mockedPrisma.volunteer.findMany.mockResolvedValue([volunteerRow()] as never)
+
+    const summary = await runRescueCheck()
+
+    expect(summary.rescued).toBe(1)
+    expect(mockedNotify).toHaveBeenCalledTimes(1)
+    expect(mockedNotify.mock.calls[0]![0]).toEqual(['vol-1']) // owner absent
+  })
+
+  it('skips volunteers who opted out of location-based alerts', async () => {
     mockedPrisma.donation.findMany.mockResolvedValue([donationRow()] as never)
+    mockedPrisma.volunteer.findMany.mockResolvedValue([
+      volunteerRow({ user: { locationAlertsEnabled: false } }),
+    ] as never)
 
-    await runRescueCheck()
+    const summary = await runRescueCheck()
 
-    const where = mockedPrisma.donation.findMany.mock.calls[0]?.[0]?.where
-    expect(where.rescueNotifiedAt).toBeNull()
-    // The only protection against repeat alerts lives in the query + the
-    // transactional flag write — a row that already went through the sweep
-    // can never match the filter again.
+    expect(summary.rescued).toBe(1)
+    expect(mockedNotify).toHaveBeenCalledTimes(1)
+    expect(mockedNotify.mock.calls[0]![0]).toEqual(['donor-1']) // volunteer absent
+  })
+
+  it('only alerts volunteers within the configured radius (15 km by default)', async () => {
+    mockedPrisma.donation.findMany.mockResolvedValue([donationRow()] as never)
+    // ~2,200 km away — way beyond VOLUNTEER_RADIUS_KM.
+    mockedPrisma.volunteer.findMany.mockResolvedValue([
+      volunteerRow({ currentLatitude: 32.9, currentLongitude: 78.6 }),
+    ] as never)
+
+    const summary = await runRescueCheck()
+
+    expect(summary.rescued).toBe(1)
+    expect(mockedNotify).toHaveBeenCalledTimes(1)
+    expect(mockedNotify.mock.calls[0]![0]).toEqual(['donor-1'])
   })
 })

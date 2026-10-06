@@ -16,6 +16,7 @@
  *
  * Usage (from backend/):  npx tsx scripts/demo-flow-drive.ts
  */
+/// <reference types="node" />
 import 'dotenv/config'
 
 const API_BASE = process.env.E2E_API_URL ?? 'http://localhost:3001/api/v1'

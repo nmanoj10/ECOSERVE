@@ -10,6 +10,11 @@ const APPROACH_RADIUS_KM = 0.5
 export interface ApproachingCandidate {
   id: string
   approachingNotifiedAt: Date | null
+  /** Chosen drop pin — the destination for rescue runs, which have no NGO. */
+  dropLatitude: number | null
+  dropLongitude: number | null
+  /** Human label for the drop point (distribution spot name / handout area). */
+  dropLocation: string
   assignment: {
     volunteer: { user: { fullName: string } }
     donation: {
@@ -39,11 +44,17 @@ export async function maybeNotifyApproaching(
   longitude: number,
 ): Promise<void> {
   const ngo = delivery.assignment.donation.requests[0]?.ngo
+  // NGO runs alert on the NGO pin; rescue redistributions (no NGO) alert on the
+  // distribution spot the volunteer chose when claiming the rescue.
+  const targetLat = ngo?.latitude ?? delivery.dropLatitude
+  const targetLng = ngo?.longitude ?? delivery.dropLongitude
+  const destinationLabel = ngo?.ngoName ?? delivery.dropLocation
+
   if (
     delivery.approachingNotifiedAt == null &&
-    ngo?.latitude != null &&
-    ngo.longitude != null &&
-    haversineKm(latitude, longitude, ngo.latitude, ngo.longitude) <= APPROACH_RADIUS_KM
+    targetLat != null &&
+    targetLng != null &&
+    haversineKm(latitude, longitude, targetLat, targetLng) <= APPROACH_RADIUS_KM
   ) {
     const claimed = await prisma.delivery.updateMany({
       where: { id: delivery.id, approachingNotifiedAt: null },
@@ -52,13 +63,13 @@ export async function maybeNotifyApproaching(
 
     if (claimed.count === 1) {
       const recipients: string[] = [delivery.assignment.donation.donor.userId]
-      if (ngo.userId) recipients.push(ngo.userId)
+      if (ngo?.userId) recipients.push(ngo.userId)
 
       await notifyUsers(recipients, {
         title: `${delivery.assignment.volunteer.user.fullName} is almost there`,
         message:
           `${delivery.assignment.volunteer.user.fullName} is within ${Math.round(APPROACH_RADIUS_KM * 1000)} m of ` +
-          `${ngo.ngoName} with ${delivery.assignment.donation.foodName}.`,
+          `${destinationLabel} with ${delivery.assignment.donation.foodName}.`,
         type: NOTIFICATION_TYPES.VOLUNTEER_APPROACHING,
         donationId: delivery.assignment.donation.id,
       })
@@ -66,7 +77,7 @@ export async function maybeNotifyApproaching(
       // Realtime: watchers' live-tracking maps flip to "volunteer approaching".
       emitToDeliveryRoom(delivery.id, 'delivery:approaching', {
         deliveryId: delivery.id,
-        ngoName: ngo.ngoName,
+        ngoName: destinationLabel,
       })
     }
   }

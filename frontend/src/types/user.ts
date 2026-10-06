@@ -43,6 +43,8 @@ export interface UserProfile {
   role: Role
   status: string
   profileImage?: string | null
+  /** Privacy opt-out: when false, no location-based rescue alerts are sent. */
+  locationAlertsEnabled?: boolean
   donor?: DonorProfile | null
   ngo?: NgoProfile | null
   volunteer?: VolunteerProfile | null

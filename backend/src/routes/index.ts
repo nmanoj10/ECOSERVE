@@ -13,6 +13,7 @@ import { donorRoutes } from './donor.routes.js'
 import { ngoRoutes } from './ngo.routes.js'
 import { notificationsRoutes } from './notifications.routes.js'
 import { uploadRoutes } from './upload.routes.js'
+import { userRoutes } from './user.routes.js'
 import { volunteerRoutes } from './volunteer.routes.js'
 
 export const rootRouter = Router()
@@ -35,6 +36,7 @@ apiRouter.use('/geo', geoRoutes)
 apiRouter.use('/ngo', ngoRoutes)
 apiRouter.use('/notifications', notificationsRoutes)
 apiRouter.use('/uploads', uploadRoutes)
+apiRouter.use('/users', userRoutes)
 apiRouter.use('/volunteer', volunteerRoutes)
 // apiRouter.use('/impact', impactRoutes)         // future phases
 

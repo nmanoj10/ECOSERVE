@@ -5,6 +5,7 @@
  * log in and click "Start pickup" itself.
  */
 import 'dotenv/config'
+import process from 'node:process'
 
 const API_BASE = process.env.E2E_API_URL ?? 'http://localhost:3001/api/v1'
 const SUPABASE_URL = (process.env.SUPABASE_URL ?? '').replace(/\/$/, '')

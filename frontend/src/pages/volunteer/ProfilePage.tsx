@@ -8,6 +8,7 @@ import { fetchMe } from '@/api/auth'
 import { updateVolunteerProfile, type VolunteerAvailability } from '@/api/volunteer'
 import DashboardShell from '@/components/layout/DashboardShell'
 import { LocationPinMap } from '@/components/maps/LocationPinMap'
+import { RescueAlertsToggleCard } from '@/components/preferences/RescueAlertsToggleCard'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -70,6 +71,7 @@ export default function VolunteerProfilePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [alertsEnabled, setAlertsEnabled] = useState(true)
   const geo = useGeolocation()
   const geoCode = useReverseGeocode()
   const lastLookup = useRef('')
@@ -110,6 +112,7 @@ export default function VolunteerProfilePage() {
         return
       }
       setProfile(user.volunteer)
+      setAlertsEnabled(user.locationAlertsEnabled ?? true)
       reset(toFormValues(user.volunteer))
     } catch (err) {
       setError(
@@ -308,6 +311,9 @@ export default function VolunteerProfilePage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Phase 46 — privacy opt-out for location-based rescue alerts (spec §9). */}
+        <RescueAlertsToggleCard enabled={alertsEnabled} />
 
         <Card>
           <CardHeader>

@@ -1,4 +1,5 @@
 import { haversineKm } from '../utils/geo.js'
+import { env } from '../config/env.js'
 
 /**
  * Transit-point discovery for the rescue flow (Phase 19, Step 56).
@@ -23,6 +24,12 @@ export interface TransitPoint {
   latitude: number
   longitude: number
   distanceKm: number
+  /**
+   * Approximate travel time in minutes from the search point, straight-line
+   * distance ÷ `RESCUE_AVG_SPEED_KMH`. A budget heuristic — never a turn-by-turn
+   * ETA, so the UI says "~X min by road (estimate)".
+   */
+  travelTimeMinutes: number
 }
 
 const TYPE_LABELS: Record<TransitPoint['type'], string> = {
@@ -115,14 +122,15 @@ async function queryOverpass(
 
 /**
  * Finds up to `limit` nearby railway stations, bus stands and other spots
- * where people in need can be found, sorted by distance. Returns `[]` when the
+ * where people in need are commonly found, sorted by distance. The radius
+ * defaults to `RESCUE_SPOT_RADIUS_KM` (env-tunable). Returns `[]` when the
  * upstream API is unreachable — the caller degrades gracefully (falls back to
  * the donation's own coordinates).
  */
 export async function findNearbyTransitPoints(
   lat: number,
   lng: number,
-  radiusMeters = 3000,
+  radiusMeters = env.RESCUE_SPOT_RADIUS_KM * 1000,
   limit = 8,
 ): Promise<TransitPoint[]> {
   let elements: OverpassElement[] = []
@@ -142,6 +150,7 @@ export async function findNearbyTransitPoints(
       const type = classify(el)
       if (pointLat == null || pointLng == null || !type) return null
       const tags = el.tags ?? {}
+      const distanceKm = Math.round(haversineKm(lat, lng, pointLat, pointLng) * 100) / 100
 
       return {
         name: tags['name'] ?? TYPE_LABELS[type],
@@ -150,7 +159,8 @@ export async function findNearbyTransitPoints(
         address: pointAddress(tags),
         latitude: pointLat,
         longitude: pointLng,
-        distanceKm: Math.round(haversineKm(lat, lng, pointLat, pointLng) * 100) / 100,
+        distanceKm,
+        travelTimeMinutes: Math.max(1, Math.ceil((distanceKm * 60) / env.RESCUE_AVG_SPEED_KMH)),
       }
     })
     .filter((point): point is TransitPoint => point !== null)
