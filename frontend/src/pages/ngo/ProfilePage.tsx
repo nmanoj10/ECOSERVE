@@ -378,7 +378,7 @@ export default function NgoProfilePage() {
           </Card>
         </div>
       ) : error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} error={error} onRetry={load} />
       ) : (
         form
       )}

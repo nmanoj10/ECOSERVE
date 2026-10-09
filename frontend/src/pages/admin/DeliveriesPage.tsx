@@ -190,7 +190,7 @@ export default function AdminDeliveriesPage() {
       subtitle="Track every run — volunteer, ETA, status, and live location"
     >
       {error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} error={error} onRetry={load} />
       ) : (
         <>
           <div className="mb-6">

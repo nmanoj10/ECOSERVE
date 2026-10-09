@@ -255,7 +255,7 @@ export default function AdminReportsPage() {
   return (
     <DashboardShell roleLabel="Admin" nav={adminNav} title="Reports" subtitle="Platform performance over any window you choose">
       {error ? (
-        <ErrorState description={error} onRetry={() => load(range, customFrom, customTo)} />
+        <ErrorState description={error} error={error} onRetry={() => load(range, customFrom, customTo)} />
       ) : (
         <>
           <div className="mb-6 flex flex-wrap items-end justify-between gap-3">

@@ -65,6 +65,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         description="An unexpected error interrupted this view. Reloading usually fixes it — your data is safe."
         retryLabel="Reload"
         onRetry={() => window.location.reload()}
+        error={this.state.error}
         className="min-h-[60vh]"
       />
     )

@@ -1,0 +1,9 @@
+# Ecoserve — public crawling rules
+User-agent: *
+Allow: /
+
+# Admin area is private.
+Disallow: /admin
+
+# Where to find the full URL list (public marketing pages).
+Sitemap: https://ecoserve.vercel.app/sitemap.xml

@@ -115,7 +115,7 @@ export default function AdminDonationsPage() {
       subtitle="Every listing on the platform, across all six lifecycle states"
     >
       {error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} error={error} onRetry={load} />
       ) : (
         <>
           <div className="mb-6">

@@ -51,7 +51,7 @@ vi.mock('@/services/socket', () => ({
 }))
 
 describe('AuthLayout', () => {
-  it('hides the brand panel below lg and always shows the form panel', () => {
+  it('renders the form centered with a single always-visible brand link', () => {
     render(
       <MemoryRouter>
         <AuthLayout title="Welcome back" subtitle="Log in">
@@ -60,14 +60,14 @@ describe('AuthLayout', () => {
       </MemoryRouter>,
     )
 
-    const aside = document.querySelector('aside')!
-    expect(aside.className).toContain('hidden')
-    expect(aside.className).toContain('lg:block')
+    // Simple centered layout: no brand sidebar anymore.
+    expect(document.querySelector('aside')).toBeNull()
 
-    // The mobile-only brand link is the inverse: hidden on lg+.
-    const mobileBrand = screen.getAllByLabelText('Ecoserve home').find((el) => el.className.includes('lg:hidden'))
-    expect(mobileBrand).toBeDefined()
+    // One brand link, visible at every breakpoint.
+    const brandLinks = screen.getAllByLabelText('Ecoserve home')
+    expect(brandLinks).toHaveLength(1)
 
+    expect(screen.getByText('Welcome back')).toBeInTheDocument()
     expect(screen.getByText('Form content')).toBeInTheDocument()
   })
 })

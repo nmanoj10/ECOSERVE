@@ -356,7 +356,7 @@ export default function VolunteerProfilePage() {
           </Card>
         </div>
       ) : error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} error={error} onRetry={load} />
       ) : (
         form
       )}

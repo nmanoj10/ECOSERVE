@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { Route, Routes, useLocation } from 'react-router-dom'
 
+import { PageMeta } from '@/components/seo/PageMeta'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 import HomePage from '@/pages/public/HomePage'
 import NotFoundPage from '@/pages/public/NotFoundPage'
@@ -65,6 +66,7 @@ export default function App() {
         </div>
       }
     >
+      <PageMeta />
       <ScrollToTop />
       <RouteErrorBoundary>
         <Routes>

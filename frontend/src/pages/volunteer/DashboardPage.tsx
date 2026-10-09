@@ -325,7 +325,7 @@ export default function VolunteerDashboardPage() {
   return (
     <DashboardShell roleLabel="Volunteer" nav={volunteerNav} title="Volunteer dashboard" subtitle="Deliver surplus food, rescue what's left">
       {error ? (
-        <ErrorState description={error} onRetry={() => load()} />
+        <ErrorState description={error} error={error} onRetry={() => load()} />
       ) : (
         <>
           {/* Header + Step 58 availability switcher */}

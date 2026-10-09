@@ -1,15 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft, Bike, Eye, EyeOff, HandHeart, Store } from 'lucide-react'
+import { Eye, EyeOff, Loader2, Store, HandHeart, Bike, ArrowLeft } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router-dom'
 import { z } from 'zod'
 
 import AuthLayout from '@/components/layout/AuthLayout'
-import RegisterImagePanel from '@/components/layout/RegisterImagePanel'
-
-import createAccImage from '@/assets/create-acc.webp'
 
 import { signup, getCurrentUser, setTokens, getAccessToken } from '@/services/local-auth'
 import { roleDashboardPath } from '@/utils/auth'
@@ -79,7 +75,8 @@ function buildPayload(values: RegisterFormValues): RegisterPayload {
 }
 
 const inputClass =
-  'w-full rounded-lg border border-neutral-300 bg-white px-3.5 py-2.5 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20'
+  'w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-base text-neutral-900 sm:text-sm ' +
+  'placeholder:text-neutral-400 transition hover:border-neutral-300 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10'
 
 const roles = [
   {
@@ -244,24 +241,35 @@ export default function RegisterPage() {
     <AuthLayout
       title="Join Ecoserve"
       subtitle="Create your account as a donor, NGO, or volunteer"
-      panel={<RegisterImagePanel />}
-      image={createAccImage}
     >
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
-        {/* Registering as */}
+      <form
+        onSubmit={handleSubmit(onSubmit)}
+        className="space-y-5 rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_24px_48px_-24px_rgba(22,163,74,0.18)] sm:p-7"
+      >
+        {/* Registering as — role tabs */}
         <div>
-          <span className="mb-1.5 block text-sm font-medium text-neutral-700">Registering as</span>
-          <div className="grid grid-cols-3 gap-2">
+          <span className="mb-2 block text-sm font-medium text-neutral-700">Registering as</span>
+          <div className="grid grid-cols-3 gap-2.5">
             {roles.map((r) => {
               const selected = role === r.value
               return (
                 <label
                   key={r.value}
-                  className={`cursor-pointer rounded-xl border p-3 text-center transition ${selected ? 'border-brand-500 bg-brand-50 ring-2 ring-brand-500/20' : 'border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'}`}>
+                  className={`group relative cursor-pointer rounded-2xl border p-3 text-center transition ${
+                    selected
+                      ? 'border-brand-500 bg-brand-50/70 shadow-sm shadow-brand-500/10 ring-2 ring-brand-500/20'
+                      : 'border-neutral-200 hover:border-brand-300 hover:bg-brand-50/40'
+                  }`}
+                >
                   <input type="radio" value={r.value} className="sr-only" {...register('role')} />
                   <span
-                    className={`mx-auto flex size-9 items-center justify-center rounded-lg transition ${selected ? 'bg-brand-600 text-white' : 'bg-neutral-100 text-neutral-500'}`}>
-                    <r.icon className="size-4.5" />
+                    className={`mx-auto flex size-10 items-center justify-center rounded-xl transition ${
+                      selected
+                        ? 'bg-gradient-to-br from-brand-500 to-emerald-600 text-white shadow-sm shadow-brand-600/30'
+                        : 'bg-neutral-100 text-neutral-500 group-hover:bg-brand-100 group-hover:text-brand-700'
+                    }`}
+                  >
+                    <r.icon className="size-5" />
                   </span>
                   <span className={`mt-2 block text-xs font-semibold ${selected ? 'text-brand-800' : 'text-neutral-700'}`}>
                     {r.label}
@@ -278,14 +286,14 @@ export default function RegisterPage() {
         <div>
           <label htmlFor="fullName" className="mb-1.5 block text-sm font-medium text-neutral-700">Full name</label>
           <input id="fullName" autoComplete="name" className={inputClass} placeholder="Your name" {...register('fullName')} />
-          {errors.fullName && <p className="mt-1 text-xs text-red-600">{errors.fullName.message}</p>}
+          {errors.fullName && <p className="mt-1 text-xs font-medium text-red-600">{errors.fullName.message}</p>}
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-neutral-700">Email</label>
             <input id="email" type="email" autoComplete="email" className={inputClass} placeholder="you@example.com" {...register('email')} />
-            {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email.message}</p>}
+            {errors.email && <p className="mt-1 text-xs font-medium text-red-600">{errors.email.message}</p>}
           </div>
 
           <div>
@@ -316,7 +324,7 @@ export default function RegisterPage() {
                 {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
               </button>
             </div>
-            {errors.password && <p className="mt-1 text-xs text-red-600">{errors.password.message}</p>}
+            {errors.password && <p className="mt-1 text-xs font-medium text-red-600">{errors.password.message}</p>}
           </div>
 
           <div>
@@ -340,73 +348,173 @@ export default function RegisterPage() {
                 {showConfirm ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
               </button>
             </div>
-            {errors.confirmPassword && <p className="mt-1 text-xs text-red-600">{errors.confirmPassword.message}</p>}
+            {errors.confirmPassword && <p className="mt-1 text-xs font-medium text-red-600">{errors.confirmPassword.message}</p>}
           </div>
         </div>
 
         {role === 'DONOR' && (
-          <div className="space-y-4 rounded-xl bg-neutral-50 p-4">
-            <Field label="Organization name" error={errors.donor?.organizationName?.message}>
-              <input className={inputClass} placeholder="Green Kitchen" {...register('donor.organizationName')} />
-            </Field>
-            <Field label="Organization type" error={errors.donor?.organizationType?.message}>
-              <input className={inputClass} placeholder="Restaurant / Grocery / Caterer…" {...register('donor.organizationType')} />
-            </Field>
-            <Field label="Address" error={errors.donor?.address?.message}>
-              <input className={inputClass} placeholder="Street address" {...register('donor.address')} />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="City" error={errors.donor?.city?.message}>
-                <input className={inputClass} placeholder="Mumbai" {...register('donor.city')} />
-              </Field>
-              <Field label="State" error={errors.donor?.state?.message}>
-                <input className={inputClass} placeholder="Maharashtra" {...register('donor.state')} />
-              </Field>
+          <div className="space-y-4 rounded-2xl border border-neutral-100 bg-neutral-50/80 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Organization details</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="organizationName" className="mb-1.5 block text-sm font-medium text-neutral-700">Organization name</label>
+                <input
+                  id="organizationName"
+                  className={inputClass}
+                  placeholder="Green Kitchen"
+                  {...register('donor.organizationName')}
+                />
+                {errors.donor?.organizationName && <p className="mt-1 text-xs font-medium text-red-600">{errors.donor.organizationName.message}</p>}
+              </div>
+              <div>
+                <label htmlFor="organizationType" className="mb-1.5 block text-sm font-medium text-neutral-700">Organization type</label>
+                <input
+                  id="organizationType"
+                  className={inputClass}
+                  placeholder="Restaurant / Grocery / Caterer"
+                  {...register('donor.organizationType')}
+                />
+                {errors.donor?.organizationType && <p className="mt-1 text-xs font-medium text-red-600">{errors.donor.organizationType.message}</p>}
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="address" className="mb-1.5 block text-sm font-medium text-neutral-700">Address</label>
+                <input
+                  id="address"
+                  className={inputClass}
+                  placeholder="Street address"
+                  {...register('donor.address')}
+                />
+                {errors.donor?.address && <p className="mt-1 text-xs font-medium text-red-600">{errors.donor.address.message}</p>}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="city" className="mb-1.5 block text-sm font-medium text-neutral-700">City</label>
+                  <input
+                    id="city"
+                    className={inputClass}
+                    placeholder="Mumbai"
+                    {...register('donor.city')}
+                  />
+                  {errors.donor?.city && <p className="mt-1 text-xs font-medium text-red-600">{errors.donor.city.message}</p>}
+                </div>
+                <div>
+                  <label htmlFor="state" className="mb-1.5 block text-sm font-medium text-neutral-700">State</label>
+                  <input
+                    id="state"
+                    className={inputClass}
+                    placeholder="Maharashtra"
+                    {...register('donor.state')}
+                  />
+                  {errors.donor?.state && <p className="mt-1 text-xs font-medium text-red-600">{errors.donor.state.message}</p>}
+                </div>
+              </div>
             </div>
           </div>
         )}
 
         {role === 'NGO' && (
-          <div className="space-y-4 rounded-xl bg-neutral-50 p-4">
-            <Field label="NGO name" error={errors.ngo?.ngoName?.message}>
-              <input className={inputClass} placeholder="Food Bank Foundation" {...register('ngo.ngoName')} />
-            </Field>
-            <Field label="Registration number" error={errors.ngo?.registrationNumber?.message}>
-              <input className={inputClass} placeholder="Reg. no." {...register('ngo.registrationNumber')} />
-            </Field>
-            <Field label="Address" error={errors.ngo?.address?.message}>
-              <input className={inputClass} placeholder="Street address" {...register('ngo.address')} />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="City" error={errors.ngo?.city?.message}>
-                <input className={inputClass} placeholder="Mumbai" {...register('ngo.city')} />
-              </Field>
-              <Field label="State" error={errors.ngo?.state?.message}>
-                <input className={inputClass} placeholder="Maharashtra" {...register('ngo.state')} />
-              </Field>
+          <div className="space-y-4 rounded-2xl border border-neutral-100 bg-neutral-50/80 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Organization details</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="ngoName" className="mb-1.5 block text-sm font-medium text-neutral-700">NGO name</label>
+                <input
+                  id="ngoName"
+                  className={inputClass}
+                  placeholder="Food Bank Foundation"
+                  {...register('ngo.ngoName')}
+                />
+                {errors.ngo?.ngoName && <p className="mt-1 text-xs font-medium text-red-600">{errors.ngo.ngoName.message}</p>}
+              </div>
+              <div>
+                <label htmlFor="registrationNumber" className="mb-1.5 block text-sm font-medium text-neutral-700">Registration number</label>
+                <input
+                  id="registrationNumber"
+                  className={inputClass}
+                  placeholder="Reg. no."
+                  {...register('ngo.registrationNumber')}
+                />
+                {errors.ngo?.registrationNumber && <p className="mt-1 text-xs font-medium text-red-600">{errors.ngo.registrationNumber.message}</p>}
+              </div>
             </div>
-            <Field label="Description (optional)">
-              <textarea className={inputClass} rows={2} placeholder="What your NGO does" {...register('ngo.description')} />
-            </Field>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="ngoAddress" className="mb-1.5 block text-sm font-medium text-neutral-700">Address</label>
+                <input
+                  id="ngoAddress"
+                  className={inputClass}
+                  placeholder="Street address"
+                  {...register('ngo.address')}
+                />
+                {errors.ngo?.address && <p className="mt-1 text-xs font-medium text-red-600">{errors.ngo.address.message}</p>}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="ngoCity" className="mb-1.5 block text-sm font-medium text-neutral-700">City</label>
+                  <input
+                    id="ngoCity"
+                    className={inputClass}
+                    placeholder="Mumbai"
+                    {...register('ngo.city')}
+                  />
+                  {errors.ngo?.city && <p className="mt-1 text-xs font-medium text-red-600">{errors.ngo.city.message}</p>}
+                </div>
+                <div>
+                  <label htmlFor="ngoState" className="mb-1.5 block text-sm font-medium text-neutral-700">State</label>
+                  <input
+                    id="ngoState"
+                    className={inputClass}
+                    placeholder="Maharashtra"
+                    {...register('ngo.state')}
+                  />
+                  {errors.ngo?.state && <p className="mt-1 text-xs font-medium text-red-600">{errors.ngo.state.message}</p>}
+                </div>
+              </div>
+            </div>
+            <div className="sm:col-span-2">
+              <label htmlFor="ngoDescription" className="mb-1.5 block text-sm font-medium text-neutral-700">Description (optional)</label>
+              <textarea
+                id="ngoDescription"
+                rows={2}
+                className={inputClass}
+                placeholder="What your NGO does"
+                {...register('ngo.description')}
+              />
+              {errors.ngo?.description && <p className="mt-1 text-xs font-medium text-red-600">{errors.ngo.description.message}</p>}
+            </div>
           </div>
         )}
 
         {role === 'VOLUNTEER' && (
-          <div className="space-y-4 rounded-xl bg-neutral-50 p-4">
+          <div className="space-y-4 rounded-2xl border border-neutral-100 bg-neutral-50/80 p-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Delivery details (optional)</p>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Vehicle type">
-                <input className={inputClass} placeholder="Bike / Car" {...register('volunteer.vehicleType')} />
-              </Field>
-              <Field label="Vehicle number">
-                <input className={inputClass} placeholder="MH 01 AB 1234" {...register('volunteer.vehicleNumber')} />
-              </Field>
+              <div>
+                <label htmlFor="vehicleType" className="mb-1.5 block text-sm font-medium text-neutral-700">Vehicle type</label>
+                <input
+                  id="vehicleType"
+                  className={inputClass}
+                  placeholder="Bike / Car"
+                  {...register('volunteer.vehicleType')}
+                />
+              </div>
+              <div>
+                <label htmlFor="vehicleNumber" className="mb-1.5 block text-sm font-medium text-neutral-700">Vehicle number</label>
+                <input
+                  id="vehicleNumber"
+                  className={inputClass}
+                  placeholder="MH 01 AB 1234"
+                  {...register('volunteer.vehicleNumber')}
+                />
+              </div>
             </div>
           </div>
         )}
 
         {error && (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+          <p className="rounded-xl border border-red-100 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700" role="alert">
             {error}
           </p>
         )}
@@ -414,15 +522,19 @@ export default function RegisterPage() {
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded-full bg-brand-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-brand-600/25 transition hover:from-brand-700 hover:to-emerald-700 hover:shadow-lg hover:shadow-brand-600/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
+          {submitting && <Loader2 className="size-4 animate-spin" />}
           {submitting ? 'Creating account…' : 'Create account'}
         </button>
       </form>
 
+      {/* Footer */}
       <p className="mt-6 text-center text-sm text-neutral-600">
         Already have an account?{' '}
-        <Link to="/login" className="font-medium text-brand-700 hover:underline">Log in</Link>
+        <Link to="/login" className="font-semibold text-brand-700 transition hover:text-brand-800 hover:underline">
+          Log in
+        </Link>
       </p>
 
       <Link
@@ -433,15 +545,5 @@ export default function RegisterPage() {
         Back to home
       </Link>
     </AuthLayout>
-  )
-}
-
-function Field({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
-  return (
-    <div>
-      <label className="mb-1.5 block text-sm font-medium text-neutral-700">{label}</label>
-      {children}
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
-    </div>
   )
 }

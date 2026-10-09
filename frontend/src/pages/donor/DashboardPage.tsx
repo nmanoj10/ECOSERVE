@@ -307,7 +307,7 @@ export default function DonorDashboardPage() {
   return (
     <DashboardShell roleLabel="Donor" nav={donorNav} title="Donor dashboard" subtitle="Your food rescue at a glance">
       {error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} error={error} onRetry={load} />
       ) : (
         <>
           <div className="mb-6 flex flex-wrap items-end justify-between gap-3">

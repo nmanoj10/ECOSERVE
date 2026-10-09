@@ -4,17 +4,65 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/ecoserve.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#16a34a" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Non-blocking font CSS: page paints immediately, webfonts swap in when ready. -->
     <link
-      rel="stylesheet"
+      rel="preload"
+      as="style"
       href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      onload="this.onload=null;this.rel='stylesheet'"
     />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      />
+    </noscript>
+    <title>Ecoserve — Rescue surplus food, feed communities</title>
     <meta
       name="description"
-      content="Ecoserve — a sustainability platform connecting donors, NGOs, and volunteers to rescue surplus food."
+      content="Ecoserve connects restaurants, grocers, and caterers with verified NGOs and volunteers to rescue surplus food — every meal, kilogram, and CO₂ saved, tracked live."
     />
-    <title>Ecoserve</title>
+    <!-- Social (defaults; PageMeta updates these per route at runtime). -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Ecoserve" />
+    <meta property="og:title" content="Ecoserve — Rescue surplus food, feed communities" />
+    <meta
+      property="og:description"
+      content="Ecoserve connects restaurants, grocers, and caterers with verified NGOs and volunteers to rescue surplus food — every meal, kilogram, and CO₂ saved, tracked live."
+    />
+    <meta property="og:url" content="https://ecoserve.vercel.app/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Ecoserve — Rescue surplus food, feed communities" />
+    <meta
+      name="twitter:description"
+      content="Ecoserve connects restaurants, grocers, and caterers with verified NGOs and volunteers to rescue surplus food — every meal, kilogram, and CO₂ saved, tracked live."
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://ecoserve.vercel.app/#website",
+            "url": "https://ecoserve.vercel.app/",
+            "name": "Ecoserve",
+            "description": "A sustainability platform connecting donors, NGOs, and volunteers to rescue surplus food.",
+            "inLanguage": "en"
+          },
+          {
+            "@type": "Organization",
+            "@id": "https://ecoserve.vercel.app/#organization",
+            "name": "Ecoserve",
+            "url": "https://ecoserve.vercel.app/",
+            "logo": "https://ecoserve.vercel.app/ecoserve.svg",
+            "description": "Ecoserve connects restaurants, grocers, and caterers with verified NGOs and volunteers to rescue surplus food."
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

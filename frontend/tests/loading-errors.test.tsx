@@ -201,6 +201,27 @@ describe('ErrorState', () => {
 
     expect(onRetry).toHaveBeenCalledTimes(1)
   })
+
+  it('shows a retry button when an error is supplied', () => {
+    render(
+      <ErrorState title="Oops" description="Something broke" retryLabel="Try again" error={new Error('refused')} onRetry={() => {}} />,
+    )
+
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+  })
+
+  it('shows a waiting spinner when a 429/403 is waiting for Retry-After', () => {
+    const error = new Error('Too Many Requests')
+    Object.defineProperty(error, 'response', {
+      value: { headers: { 'retry-after': '2' } },
+      writable: true,
+    })
+
+    render(<ErrorState title="Oops" error={error} onRetry={() => {}} />)
+
+    expect(screen.getByRole('button', { name: /waiting/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /waiting/i })).toBeDisabled()
+  })
 })
 
 describe('ErrorBoundary', () => {

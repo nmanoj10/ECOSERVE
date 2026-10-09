@@ -161,7 +161,7 @@ export default function AdminDashboardPage() {
   return (
     <DashboardShell roleLabel="Admin" nav={adminNav} title="Admin console" subtitle="Platform-wide impact at a glance">
       {error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} error={error} onRetry={load} />
       ) : (
         <>
           <div className="mb-6">

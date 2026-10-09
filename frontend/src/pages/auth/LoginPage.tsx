@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft, Eye, EyeOff, Loader2, Lock, LogIn, Mail } from 'lucide-react'
+import { Eye, EyeOff, Loader2, LogIn, Lock, Mail, ShieldCheck, ArrowLeft } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
@@ -19,8 +19,8 @@ type LoginValues = z.infer<typeof loginSchema>
 const REMEMBERED_EMAIL_KEY = 'ecoserve.rememberedEmail'
 
 const inputClass =
-  'w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-11 pr-3.5 text-sm text-neutral-900 ' +
-  'placeholder:text-neutral-400 transition focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10'
+  'w-full rounded-xl border border-neutral-200 bg-white py-3 pl-11 pr-3.5 text-base text-neutral-900 sm:text-sm ' +
+  'placeholder:text-neutral-400 transition hover:border-neutral-300 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -108,7 +108,7 @@ export default function LoginPage() {
       title="Login to your account"
       subtitle="Your role is detected automatically from your account."
     >
-      <div className="rounded-2xl border border-neutral-200 bg-white/90 p-6 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_20px_40px_-24px_rgba(0,0,0,0.12)] backdrop-blur sm:p-7">
+      <div className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_24px_48px_-24px_rgba(22,163,74,0.18)] sm:p-8">
         <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
           {/* Email */}
           <div>
@@ -129,14 +129,23 @@ export default function LoginPage() {
                 {...register('email')}
               />
             </div>
-            {errors.email && <p className="mt-1.5 text-xs text-red-600">{errors.email.message}</p>}
+            {errors.email && <p className="mt-1.5 text-xs font-medium text-red-600">{errors.email.message}</p>}
           </div>
 
           {/* Password */}
           <div>
-            <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-neutral-700">
-              Password
-            </label>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label htmlFor="password" className="block text-sm font-medium text-neutral-700">
+                Password
+              </label>
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                className="text-xs font-semibold text-brand-700 transition hover:text-brand-800 hover:underline"
+              >
+                Forgot Password?
+              </button>
+            </div>
             <div className="relative">
               <Lock
                 className="pointer-events-none absolute left-3.5 top-1/2 size-4.5 -translate-y-1/2 text-neutral-400"
@@ -160,36 +169,27 @@ export default function LoginPage() {
                 {showPassword ? <EyeOff className="size-4.5" /> : <Eye className="size-4.5" />}
               </button>
             </div>
-            {errors.password && <p className="mt-1.5 text-xs text-red-600">{errors.password.message}</p>}
+            {errors.password && <p className="mt-1.5 text-xs font-medium text-red-600">{errors.password.message}</p>}
           </div>
 
-          {/* Remember me + Forgot password */}
-          <div className="flex items-center justify-between">
-            <label className="flex cursor-pointer select-none items-center gap-2 text-sm text-neutral-600">
-              <input
-                type="checkbox"
-                checked={remember}
-                onChange={(e) => setRemember(e.target.checked)}
-                className="size-4 rounded border-neutral-300 accent-brand-600"
-              />
-              Remember me
-            </label>
-            <button
-              type="button"
-              onClick={handleForgotPassword}
-              className="text-sm font-semibold text-brand-700 transition hover:text-brand-800 hover:underline"
-            >
-              Forgot Password?
-            </button>
-          </div>
+          {/* Remember me */}
+          <label className="flex cursor-pointer select-none items-center gap-2.5 text-sm text-neutral-600">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="size-4 rounded border-neutral-300 accent-brand-600"
+            />
+            Remember me
+          </label>
 
           {error && (
-            <p role="alert" className="rounded-lg bg-red-50 px-3 py-2.5 text-xs text-red-700">
+            <p role="alert" className="rounded-xl border border-red-100 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-700">
               {error}
             </p>
           )}
           {notice && (
-            <p role="status" className="rounded-lg bg-brand-50 px-3 py-2.5 text-xs text-brand-800">
+            <p role="status" className="rounded-xl border border-brand-100 bg-brand-50 px-3.5 py-2.5 text-xs font-medium text-brand-800">
               {notice}
             </p>
           )}
@@ -197,11 +197,17 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-brand-600/30 transition hover:bg-brand-700 disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-brand-600/25 transition hover:from-brand-700 hover:to-emerald-700 hover:shadow-lg hover:shadow-brand-600/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
             {submitting ? 'Logging in…' : 'Login'}
           </button>
+
+          {/* Trust hint */}
+          <p className="flex items-center justify-center gap-1.5 border-t border-neutral-100 pt-4 text-xs text-neutral-400">
+            <ShieldCheck className="size-3.5 text-brand-500" aria-hidden="true" />
+            Your session is encrypted and stays on this device
+          </p>
         </form>
       </div>
 

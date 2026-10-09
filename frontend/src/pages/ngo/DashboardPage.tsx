@@ -261,7 +261,7 @@ export default function NgoDashboardPage() {
   return (
     <DashboardShell roleLabel="NGO" nav={ngoNav} title="NGO dashboard" subtitle="Find, accept, and redistribute surplus food">
       {error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} error={error} onRetry={load} />
       ) : (
         <>
           <div className="mb-6 flex flex-wrap items-end justify-between gap-3">

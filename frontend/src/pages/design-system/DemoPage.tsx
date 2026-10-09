@@ -311,6 +311,7 @@ export default function DemoPage() {
               <ErrorState
                 title="Couldn't load deliveries"
                 description="The network request timed out. Retry to fetch the latest list."
+                error={undefined}
                 onRetry={async () => {
                   await new Promise((resolve) => setTimeout(resolve, 800))
                 }}

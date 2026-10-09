@@ -14,7 +14,13 @@ import './index.css'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      // Keep the browser's Evidence UI responsive. TanStack Query will
+      // retry a failed source once before it falls back to the caches, which
+      // is exactly what the admin page needs when a single request trips a
+      // 5xx. Batch polling and the 401 token-refresh flow live in api/client.ts
+      // and stay separately retryable.
       retry: 1,
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30_000),
       refetchOnWindowFocus: false,
       staleTime: 30_000,
     },

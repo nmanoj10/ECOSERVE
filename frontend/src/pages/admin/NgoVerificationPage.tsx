@@ -194,7 +194,7 @@ export default function AdminNgoVerificationPage() {
       subtitle="Review applications and approve the NGOs on Ecoserve"
     >
       {error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} error={error} onRetry={load} />
       ) : (
         <>
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3">

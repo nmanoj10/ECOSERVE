@@ -237,7 +237,7 @@ export default function AdminUsersPage() {
   return (
     <DashboardShell roleLabel="Admin" nav={adminNav} title="User management" subtitle="Search, review, and manage every account on the platform">
       {error ? (
-        <ErrorState description={error} onRetry={load} />
+        <ErrorState description={error} error={error} onRetry={load} />
       ) : (
         <>
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
