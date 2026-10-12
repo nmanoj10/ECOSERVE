@@ -67,8 +67,14 @@ function volunteerRow(userId: string, lat: number | null, lng: number | null) {
 function mockTransactionSuccess() {
   mockedPrisma.$transaction.mockImplementation((cb: (tx: never) => Promise<unknown>) => {
     const tx = {
-      donation: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-      ngoRequest: { create: vi.fn().mockResolvedValue({ id: 'req-1' }) },
+      donation: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      ngoRequest: {
+        create: vi.fn().mockResolvedValue({ id: 'req-1' }),
+        findMany: vi.fn().mockResolvedValue([]), // No previous claims for these tests
+      },
       auditLog: { create: vi.fn().mockResolvedValue({}) },
     }
     return cb(tx as never)
@@ -210,5 +216,104 @@ describe('createRequest — volunteer alert on claim', () => {
 
     expect(res.status).toHaveBeenCalledWith(201)
     expect(res.json).toHaveBeenCalledWith({ request: { id: 'req-1' } })
+  })
+})
+
+describe('createRequest — partial quantity claims', () => {
+  let txMock: {
+    donation: { updateMany: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> }
+    ngoRequest: { create: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> }
+    auditLog: { create: ReturnType<typeof vi.fn> }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockedNotify.mockResolvedValue(1)
+    mockedPrisma.ngo.findUnique.mockResolvedValue(ngoRow() as never)
+
+    txMock = {
+      donation: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      ngoRequest: {
+        create: vi.fn().mockResolvedValue({ id: 'req-1' }),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({}) },
+    }
+    mockedPrisma.$transaction.mockImplementation((cb: (tx: never) => Promise<unknown>) => cb(txMock as never))
+  })
+
+  it('allows partial claim with quantity and unit', async () => {
+    mockedPrisma.donation.findUnique.mockResolvedValue(donationRow({ quantity: 20, unit: 'packets' }) as never)
+    mockedPrisma.volunteer.findMany.mockResolvedValue([] as never)
+    txMock.ngoRequest.create.mockResolvedValue({ id: 'req-1', quantity: 5, unit: 'packets' })
+
+    const req = makeReq({ body: { donationId: 'don-1', quantity: 5, unit: 'packets' } })
+    const res = makeRes()
+    await createRequest(req as never, res as never)
+
+    expect(res.status).toHaveBeenCalledWith(201)
+    expect(res.json).toHaveBeenCalledWith({ request: { id: 'req-1', quantity: 5, unit: 'packets' } })
+    // Donation should stay AVAILABLE (not fully claimed)
+    expect(txMock.donation.update).not.toHaveBeenCalled()
+  })
+
+  it('rejects partial claim exceeding available quantity', async () => {
+    mockedPrisma.donation.findUnique.mockResolvedValue(donationRow({ quantity: 10, unit: 'kg' }) as never)
+
+    const req = makeReq({ body: { donationId: 'don-1', quantity: 15, unit: 'kg' } })
+    const res = makeRes()
+
+    await expect(createRequest(req as never, res as never)).rejects.toMatchObject({
+      code: 'INVALID_QUANTITY',
+    })
+  })
+
+  it('rejects partial claim with mismatched unit', async () => {
+    mockedPrisma.donation.findUnique.mockResolvedValue(donationRow({ quantity: 10, unit: 'kg' }) as never)
+
+    const req = makeReq({ body: { donationId: 'don-1', quantity: 5, unit: 'packets' } })
+    const res = makeRes()
+
+    await expect(createRequest(req as never, res as never)).rejects.toMatchObject({
+      code: 'INVALID_UNIT',
+    })
+  })
+
+  it('marks donation RESERVED when partial claims sum to full quantity', async () => {
+    mockedPrisma.donation.findUnique.mockResolvedValue(donationRow({ quantity: 10, unit: 'kg' }) as never)
+    mockedPrisma.volunteer.findMany.mockResolvedValue([] as never)
+    txMock.ngoRequest.create.mockResolvedValue({ id: 'req-2', quantity: 4, unit: 'kg' })
+    txMock.ngoRequest.findMany.mockResolvedValue([{ quantity: 6 }]) // Previous claim of 6 kg
+
+    const req = makeReq({ body: { donationId: 'don-1', quantity: 4, unit: 'kg' } })
+    const res = makeRes()
+    await createRequest(req as never, res as never)
+
+    expect(res.status).toHaveBeenCalledWith(201)
+    // Donation should be marked RESERVED
+    expect(txMock.donation.update).toHaveBeenCalledWith({
+      where: { id: 'don-1' },
+      data: { status: 'RESERVED' },
+    })
+  })
+
+  it('defaults to full claim when quantity not provided', async () => {
+    mockedPrisma.donation.findUnique.mockResolvedValue(donationRow({ quantity: 10, unit: 'kg' }) as never)
+    mockedPrisma.volunteer.findMany.mockResolvedValue([] as never)
+    txMock.ngoRequest.create.mockResolvedValue({ id: 'req-1', quantity: null, unit: null })
+
+    const req = makeReq({ body: { donationId: 'don-1' } }) // No quantity
+    const res = makeRes()
+    await createRequest(req as never, res as never)
+
+    expect(res.status).toHaveBeenCalledWith(201)
+    // Full claim should mark donation RESERVED
+    expect(txMock.donation.update).toHaveBeenCalledWith({
+      where: { id: 'don-1' },
+      data: { status: 'RESERVED' },
+    })
   })
 })

@@ -264,11 +264,13 @@ model DonationImage {
   @@map("donation_images")
 }
 
-/// An NGO's request to accept a donation
+/// An NGO's request to accept a donation (full or partial quantity)
 model NgoRequest {
   id          String        @id @default(cuid())
   ngoId       String
   donationId  String
+  quantity    Float?        // Requested quantity (null = full donation)
+  unit        String?       // Unit for requested quantity
   status      RequestStatus @default(PENDING)
   requestedAt DateTime      @default(now())
   acceptedAt  DateTime?

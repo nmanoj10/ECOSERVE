@@ -25,9 +25,12 @@ export const nearbyDonationsQuerySchema = z.object({
 /**
  * Phase 18, Step 55 — POST /api/v1/ngo/requests body.
  * One-step claim: creating the request accepts the donation (see controller).
+ * Supports partial quantity claims — donation stays AVAILABLE until fully claimed.
  */
 export const createNgoRequestSchema = z.object({
   donationId: z.string().trim().min(1).max(64),
+  quantity: z.number().positive().optional(),      // Requested quantity (optional, defaults to full)
+  unit: z.string().trim().min(1).max(20).optional(), // Unit for requested quantity
 })
 
 export type CreateNgoRequestBody = z.infer<typeof createNgoRequestSchema>

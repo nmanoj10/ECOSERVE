@@ -154,10 +154,9 @@ export async function updateProfile(req: Request, res: Response): Promise<void> 
 
 /**
  * Phase 18, Step 55 — POST /api/v1/ngo/requests.
- * One-step claim: the NGO's request is created as ACCEPTED and the donation is
- * marked RESERVED (DonationStatus has no ACCEPTED value — RESERVED is the
- * claimed state). The request row's `acceptedAt` records when it happened.
- * Rejecting a non-AVAILABLE donation prevents double-claims.
+ * One-step claim: the NGO's request is created as ACCEPTED.
+ * Supports partial quantity claims — donation stays AVAILABLE until fully claimed.
+ * If no quantity specified, claims the full donation (backward compatible).
  */
 export async function createRequest(req: Request, res: Response): Promise<void> {
   const user = req.user!
@@ -170,7 +169,7 @@ export async function createRequest(req: Request, res: Response): Promise<void> 
     throw new HttpError(409, 'PROFILE_INCOMPLETE', 'NGO profile not found — complete registration first')
   }
 
-  const { donationId } = req.body as CreateNgoRequestBody
+  const { donationId, quantity: requestedQuantity, unit: requestedUnit } = req.body as CreateNgoRequestBody
   const donation = await prisma.donation.findUnique({
     where: { id: donationId },
     include: {
@@ -181,24 +180,63 @@ export async function createRequest(req: Request, res: Response): Promise<void> 
     throw new HttpError(404, 'NOT_FOUND', 'Donation not found')
   }
   if (donation.status !== 'AVAILABLE') {
-    throw new HttpError(409, 'NOT_AVAILABLE', 'This donation has already been claimed')
+    throw new HttpError(409, 'NOT_AVAILABLE', 'This donation is no longer available')
+  }
+
+  // Validate requested quantity if provided
+  const isPartialClaim = requestedQuantity != null && requestedQuantity > 0
+  if (isPartialClaim) {
+    if (requestedQuantity > donation.quantity) {
+      throw new HttpError(400, 'INVALID_QUANTITY', `Requested quantity (${requestedQuantity}) exceeds available quantity (${donation.quantity} ${donation.unit})`)
+    }
+    if (requestedUnit && requestedUnit !== donation.unit) {
+      throw new HttpError(400, 'INVALID_UNIT', `Unit must match donation unit (${donation.unit})`)
+    }
   }
 
   const request = await prisma.$transaction(async (tx) => {
-    // Atomic claim: the conditional update is the single source of truth. If
-    // another NGO claimed the donation between the pre-check and now, the
-    // update touches 0 rows and the whole transaction rolls back.
-    const claimed = await tx.donation.updateMany({
-      where: { id: donationId, status: 'AVAILABLE' },
-      data: { status: 'RESERVED' },
+    // Calculate already claimed quantity from ACCEPTED requests
+    const acceptedRequests = await tx.ngoRequest.findMany({
+      where: { donationId, status: 'ACCEPTED' },
+      select: { quantity: true },
     })
-    if (claimed.count === 0) {
-      throw new HttpError(409, 'NOT_AVAILABLE', 'This donation has already been claimed')
+    const totalClaimed = acceptedRequests.reduce((sum, r) => sum + (r.quantity ?? 0), 0)
+    const remainingQuantity = donation.quantity - totalClaimed
+
+    if (isPartialClaim) {
+      if (requestedQuantity > remainingQuantity) {
+        throw new HttpError(409, 'INSUFFICIENT_QUANTITY', `Only ${remainingQuantity} ${donation.unit} remaining`)
+      }
     }
 
+    const effectiveQuantity = isPartialClaim ? requestedQuantity : remainingQuantity
+    const effectiveUnit = requestedUnit ?? donation.unit
+
+    // Create the request
     const created = await tx.ngoRequest.create({
-      data: { ngoId: ngo.id, donationId, status: 'ACCEPTED', acceptedAt: new Date() },
+      data: {
+        ngoId: ngo.id,
+        donationId,
+        quantity: isPartialClaim ? requestedQuantity : null, // null = full claim
+        unit: isPartialClaim ? effectiveUnit : null,
+        status: 'ACCEPTED',
+        acceptedAt: new Date(),
+      },
     })
+
+    // Check if donation is now fully claimed
+    const newTotalClaimed = totalClaimed + effectiveQuantity
+    const isFullyClaimed = newTotalClaimed >= donation.quantity
+
+    if (isFullyClaimed) {
+      // Mark donation as RESERVED (fully claimed)
+      await tx.donation.update({
+        where: { id: donationId },
+        data: { status: 'RESERVED' },
+      })
+    }
+    // If partial claim and not fully claimed, donation stays AVAILABLE
+
     await tx.auditLog.create({
       data: {
         userId: user.userId,
@@ -207,13 +245,16 @@ export async function createRequest(req: Request, res: Response): Promise<void> 
         entityId: created.id,
       },
     })
-    return created
+    return { created, isFullyClaimed, effectiveQuantity, effectiveUnit, totalClaimed }
   })
 
   // Phase 29, Step 75 — "Donation accepted" in-app notification to the donor.
-  const title = `Donation accepted: ${donation.foodName}`
+  const title = `Donation ${request.isFullyClaimed ? 'fully claimed' : 'partially claimed'}: ${donation.foodName}`
+  const claimedQty = request.effectiveQuantity
+  const claimedUnit = request.effectiveUnit
   const message =
-    `${ngo.ngoName} accepted your ${donation.foodName} (${donation.quantity} ${donation.unit}) and will arrange pickup.`
+    `${ngo.ngoName} claimed ${claimedQty} ${claimedUnit} of your ${donation.foodName} ` +
+    `(${donation.quantity} ${donation.unit} total)${request.isFullyClaimed ? ' — donation is now fully reserved.' : ' — donation remains available for other NGOs.'}`
   await notifyUsers([donation.donor.userId], {
     title,
     message,
@@ -221,30 +262,33 @@ export async function createRequest(req: Request, res: Response): Promise<void> 
     donationId: donation.id,
   })
 
-  // "Volunteers needed" in-app notification to AVAILABLE volunteers within
-  // 30 km the moment food is claimed, so someone can offer pickup/delivery
-  // help right away. Skipped when neither the donation nor the donor has
-  // coordinates (distance matching is impossible).
-  const dLat = donation.latitude ?? donation.donor.latitude
-  const dLng = donation.longitude ?? donation.donor.longitude
-  if (dLat != null && dLng != null) {
-    const volunteerIds = await findNearbyAvailableVolunteers(dLat, dLng, VOLUNTEER_RADIUS_KM)
-    if (volunteerIds.length > 0) {
-      const pickup = donation.pickupTime
-        ? ` Pickup at ${String(donation.pickupTime.getHours()).padStart(2, '0')}:${String(donation.pickupTime.getMinutes()).padStart(2, '0')}.`
-        : ''
-      await notifyUsers(volunteerIds, {
-        title: `Volunteers needed: ${donation.foodName}`,
-        message:
-          `${donation.foodName} (${donation.quantity} ${donation.unit}) from ${donation.donor.organizationName} ` +
-          `was accepted by ${ngo.ngoName}. Pickup: ${donation.pickupAddress}.${pickup} Offer to help with the delivery.`,
-        type: NOTIFICATION_TYPES.VOLUNTEER_NEEDED,
-        donationId: donation.id,
-      })
+  // "Volunteers needed" notification — only for full claims or first partial claim
+  // to avoid spamming volunteers for every small claim
+  // We already know if there were previous claims from totalClaimed > 0
+  const hadPreviousClaims = request.totalClaimed > 0
+  const shouldNotifyVolunteers = request.isFullyClaimed || (isPartialClaim && !hadPreviousClaims)
+  if (shouldNotifyVolunteers) {
+    const dLat = donation.latitude ?? donation.donor.latitude
+    const dLng = donation.longitude ?? donation.donor.longitude
+    if (dLat != null && dLng != null) {
+      const volunteerIds = await findNearbyAvailableVolunteers(dLat, dLng, VOLUNTEER_RADIUS_KM)
+      if (volunteerIds.length > 0) {
+        const pickup = donation.pickupTime
+          ? ` Pickup at ${String(donation.pickupTime.getHours()).padStart(2, '0')}:${String(donation.pickupTime.getMinutes()).padStart(2, '0')}.`
+          : ''
+        await notifyUsers(volunteerIds, {
+          title: `Volunteers needed: ${donation.foodName}`,
+          message:
+            `${donation.foodName} (${claimedQty} ${claimedUnit} of ${donation.quantity} ${donation.unit}) from ${donation.donor.organizationName} ` +
+            `was claimed by ${ngo.ngoName}. Pickup: ${donation.pickupAddress}.${pickup} Offer to help with the delivery.`,
+          type: NOTIFICATION_TYPES.VOLUNTEER_NEEDED,
+          donationId: donation.id,
+        })
+      }
     }
   }
 
-  res.status(201).json({ request })
+  res.status(201).json({ request: request.created })
 }
 
 /**
