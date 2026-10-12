@@ -115,6 +115,7 @@ model User {
   reviewsGiven    Review[]       @relation("Reviewer")
   reviewsReceived Review[]       @relation("Reviewee")
   sessions        Session[]
+  passwordResets  PasswordReset[]
   auditLogs       AuditLog[]
 
   @@index([role, status])
@@ -457,6 +458,25 @@ model Session {
   @@index([userId])
   @@index([expiresAt])
   @@map("sessions")
+}
+
+/// Password-reset OTP codes (forgot-password flow). Codes are stored only as
+/// SHA-256 hashes (peppered with JWT_SECRET), expire after 10 minutes, and are
+/// single-use — a successful reset marks the row and revokes all sessions.
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String
+  attempts  Int       @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_resets")
 }
 
 /// Immutable audit trail of significant actions

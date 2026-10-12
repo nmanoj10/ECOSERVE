@@ -79,6 +79,62 @@ export async function login(email: string, password: string): Promise<{ user: Us
   return data
 }
 
+/**
+ * Requests a password-reset OTP for the given email. The backend always
+ * responds 200 (anti-enumeration), so this resolves even for unregistered
+ * addresses — the UI shows the same "code sent" message either way.
+ */
+/**
+ * Google sign-in — exchanges a Firebase ID token (obtained client-side from
+ * `firebase`'s Google popup) for local JWT tokens via the backend. The backend
+ * verifies the token against Google's public keys before minting anything.
+ * `needsProfile` is true for brand-new Google accounts that still have to pick
+ * a role and phone number.
+ */
+export async function googleLogin(
+  idToken: string,
+): Promise<{ user: User; tokens: AuthTokens; needsProfile: boolean }> {
+  const res = await fetch('/api/v1/auth/google', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken }),
+  })
+
+  if (!res.ok) {
+    throw toServerError(await readJson(res), 'Google login failed')
+  }
+
+  return res.json() // { user, tokens, needsProfile }
+}
+
+export async function forgotPassword(email: string): Promise<void> {
+  const res = await fetch('/api/v1/auth/forgot-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+
+  if (!res.ok) {
+    throw toServerError(await readJson(res), 'Could not send reset code')
+  }
+}
+
+/**
+ * Verifies the emailed OTP and sets a new password. On success the backend
+ * revokes every existing session, so the user signs in again afterwards.
+ */
+export async function resetPassword(email: string, code: string, newPassword: string): Promise<void> {
+  const res = await fetch('/api/v1/auth/reset-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code, newPassword }),
+  })
+
+  if (!res.ok) {
+    throw toServerError(await readJson(res), 'Could not reset password')
+  }
+}
+
 /** Reads the (optional) error body so non-2xx responses surface a real message. */
 async function readJson(res: Response): Promise<unknown> {
   try {

@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express'
 
 import { prisma } from '../config/prisma.js'
-import { createOrConfirmAuthUser, findAndVerifyUser, generateTokenPayload, refreshLocalToken } from '../services/goTrueService.js'
+import { createOrConfirmAuthUser, findAndVerifyUser, generateTokenPayload, hashPassword, refreshLocalToken } from '../services/goTrueService.js'
 import {
   findSessionByHash,
   hashToken,
@@ -11,10 +11,13 @@ import {
   revokeSession as revokeSessionRow,
   tokenExpiry,
 } from '../services/sessionService.js'
+import { consumePasswordResetOtp, issuePasswordResetOtp, OTP_TTL_MINUTES } from '../services/passwordResetService.js'
+import { sendPasswordResetOtp } from '../services/emailService.js'
+import { verifyGoogleIdToken } from '../services/firebaseService.js'
 import { HttpError } from '../utils/HttpError.js'
 import { env } from '../config/env.js'
 import jwt from 'jsonwebtoken'
-import type { LogoutBody, RefreshBody } from '../validators/auth.js'
+import type { ForgotPasswordBody, GoogleAuthBody, LogoutBody, RefreshBody, ResetPasswordBody } from '../validators/auth.js'
 import type { LoginBody, PendingRegistrationBody, RegisterBody, SignupBody } from '../validators/register.js'
 
 /** How long a saved registration form stays valid (covers the signup link window). */
@@ -132,6 +135,78 @@ export async function createInstantSignup(req: Request, res: Response): Promise<
 }
 
 /**
+ * Forgot-password — issues a 6-digit OTP and emails it to the address.
+ *
+ * Always resolves with `{ ok: true }` (even for unknown / suspended / throttled
+ * accounts) so the endpoint can't be used to probe which emails are registered.
+ * The per-user hourly cap silently drops extra requests; SMTP-less dev runs log
+ * the code to the server console instead of emailing it.
+ */
+export async function forgotPassword(req: Request, res: Response): Promise<void> {
+  const { email } = req.body as ForgotPasswordBody
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, status: true },
+  })
+
+  // Silent no-op for anything that isn't an active account (anti-enumeration).
+  if (user && user.status === 'ACTIVE') {
+    const code = await issuePasswordResetOtp(user.id)
+
+    if (code) {
+      try {
+        await sendPasswordResetOtp(email, code, OTP_TTL_MINUTES)
+      } catch (err) {
+        // SMTP down or misconfigured — never leak the failure to the client
+        // (anti-enumeration) and never lose the flow: fall back to the dev
+        // console so the user still gets their code in development.
+        console.warn(
+          `[auth] SMTP send failed for ${email}: ${err instanceof Error ? err.message : String(err)} — falling back to console`,
+        )
+        console.log(`[dev] Password-reset OTP for ${email}: ${code} (valid for ${OTP_TTL_MINUTES} min)`)
+      }
+    } else {
+      // Rolling rate cap hit — behave as if sent (attacker learns nothing),
+      // keep the server-side signal for ops debugging.
+      console.warn(`[auth] Password-reset OTP rate cap hit for ${email}`)
+    }
+  }
+
+  res.json({ ok: true })
+}
+
+/**
+ * Reset-password — verifies the emailed OTP and sets a new password.
+ *
+ * On success the user's new password is stored (bcrypt) and every session is
+ * revoked, so a stolen/lost code can't be combined with a still-valid session.
+ * Wrong guesses are bounded per code (see consumePasswordResetOtp); the shared
+ * auth limiter bounds requests per client IP.
+ */
+export async function resetPassword(req: Request, res: Response): Promise<void> {
+  const { email, code, newPassword } = req.body as ResetPasswordBody
+
+  const user = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+  if (!user) {
+    throw new HttpError(400, 'INVALID_RESET_CODE', 'Invalid or expired reset code')
+  }
+
+  const valid = await consumePasswordResetOtp(user.id, code)
+  if (!valid) {
+    throw new HttpError(400, 'INVALID_RESET_CODE', 'Invalid or expired reset code')
+  }
+
+  const passwordHash = await hashPassword(newPassword)
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } })
+
+  // Password change invalidates every outstanding session.
+  await prisma.session.deleteMany({ where: { userId: user.id } })
+
+  res.json({ ok: true })
+}
+
+/**
  * Authenticates a user with email/password and returns JWT tokens.
  */
 export async function login(req: Request, res: Response): Promise<void> {
@@ -180,6 +255,88 @@ export async function login(req: Request, res: Response): Promise<void> {
       refreshToken,
       expiresIn: env.JWT_EXPIRES_IN,
     },
+  })
+}
+
+/**
+ * Google sign-in — verifies the Firebase ID token from the browser and either
+ * finds the platform user by email or creates a fresh one, then returns local
+ * JWT tokens (same contract as login).
+ *
+ * `needsProfile: true` means the user has no role profile yet — a brand-new
+ * Google account. The frontend sends them to /register to pick a role and
+ * (now compulsory) phone number before their dashboard.
+ */
+export async function googleLogin(req: Request, res: Response): Promise<void> {
+  const { idToken } = req.body as GoogleAuthBody
+
+  const identity = await verifyGoogleIdToken(idToken)
+
+  const existing = await prisma.user.findUnique({
+    where: { email: identity.email },
+    include: { donor: true, ngo: true, volunteer: true },
+  })
+
+  let user: {
+    id: string
+    email: string
+    fullName: string
+    role: string
+    status: string
+    donor: unknown
+    ngo: unknown
+    volunteer: unknown
+  }
+  if (existing) {
+    if (existing.status !== 'ACTIVE') {
+      throw new HttpError(403, 'ACCOUNT_SUSPENDED', 'This account is not active')
+    }
+    user = existing
+  } else {
+    // First time this Google account signs in — create the platform user with
+    // no password (password auth stays separate). Profile completion (role +
+    // phone) happens through POST /auth/register.
+    user = await prisma.user.create({
+      data: {
+        id: crypto.randomUUID(),
+        email: identity.email,
+        fullName: identity.name || '',
+        passwordHash: null,
+        phone: null,
+        role: 'DONOR', // provisional; updated during profile registration
+        status: 'ACTIVE',
+      },
+      include: { donor: true, ngo: true, volunteer: true },
+    })
+  }
+
+  // Local token pair, exactly like password login.
+  const accessTokenPayload = generateTokenPayload(user.id, user.email, env.JWT_EXPIRES_IN)
+  const accessToken = jwt.sign(accessTokenPayload, env.JWT_SECRET, { algorithm: 'HS256' })
+  const refreshToken = crypto.randomUUID()
+  await prisma.session.create({
+    data: {
+      userId: user.id,
+      refreshTokenHash: hashToken(refreshToken),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+    },
+  })
+
+  res.json({
+    user: {
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+      phone: null,
+      status: user.status,
+    },
+    tokens: {
+      accessToken,
+      refreshToken,
+      expiresIn: env.JWT_EXPIRES_IN,
+    },
+    needsProfile: !user.donor && !user.ngo && !user.volunteer,
   })
 }
 

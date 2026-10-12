@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Eye, EyeOff, Loader2, Store, HandHeart, Bike, ArrowLeft } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { z } from 'zod'
 
 import AuthLayout from '@/components/layout/AuthLayout'
@@ -20,7 +20,7 @@ const registerFormSchema = z.object({
   role: z.enum(['DONOR', 'NGO', 'VOLUNTEER']),
   fullName: z.string().min(2, 'Enter your full name'),
   email: z.string().email('Enter a valid email'),
-  phone: z.string().optional(),
+  phone: z.string().trim().min(1, 'Phone number is required').max(20, 'Enter a valid phone number'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   confirmPassword: z.string().min(8, 'Confirm your password'),
   donor: z
@@ -67,7 +67,7 @@ function buildPayload(values: RegisterFormValues): RegisterPayload {
   return {
     fullName: values.fullName,
     role: values.role,
-    phone: values.phone || undefined,
+    phone: values.phone,
     ...(values.role === 'DONOR' ? { donor: values.donor } : {}),
     ...(values.role === 'NGO' ? { ngo: values.ngo } : {}),
     ...(values.role === 'VOLUNTEER' ? { volunteer: values.volunteer } : {}),
@@ -101,10 +101,15 @@ const roles = [
 
 export default function RegisterPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
+
+  // Google sign-in redirects here with the account's email/name prefilled —
+  // the user only needs to pick a role and (now compulsory) phone number.
+  const googleProfile = (location.state as { googleProfile?: { email?: string; fullName?: string } } | null)?.googleProfile
 
   const {
     register,
@@ -114,7 +119,14 @@ export default function RegisterPage() {
   } = useForm<RegisterFormValues>({
     resolver: zodResolver(registerFormSchema),
     shouldUnregister: true,
-    defaultValues: { role: 'DONOR', email: '', password: '', confirmPassword: '', fullName: '', phone: '' },
+    defaultValues: {
+      role: 'DONOR',
+      email: googleProfile?.email ?? '',
+      password: '',
+      confirmPassword: '',
+      fullName: googleProfile?.fullName ?? '',
+      phone: '',
+    },
   })
 
   const role = watch('role')
@@ -297,8 +309,9 @@ export default function RegisterPage() {
           </div>
 
           <div>
-            <label htmlFor="phone" className="mb-1.5 block text-sm font-medium text-neutral-700">Phone (optional)</label>
+            <label htmlFor="phone" className="mb-1.5 block text-sm font-medium text-neutral-700">Phone</label>
             <input id="phone" type="tel" autoComplete="tel" className={inputClass} placeholder="+91 …" {...register('phone')} />
+            {errors.phone && <p className="mt-1 text-xs font-medium text-red-600">{errors.phone.message}</p>}
           </div>
         </div>
 

@@ -219,8 +219,14 @@ describe('registerSchema', () => {
   })
 
   it('accepts a volunteer registration with no profile', () => {
-    const result = registerSchema.safeParse({ fullName: 'Ravi', role: 'VOLUNTEER' })
+    const result = registerSchema.safeParse({ fullName: 'Ravi', role: 'VOLUNTEER', phone: '9876543210' })
     expect(result.success).toBe(true)
+  })
+
+  it('requires a phone number', () => {
+    const result = registerSchema.safeParse({ fullName: 'Ravi', role: 'VOLUNTEER' })
+    expect(result.success).toBe(false)
+    expect(result.error?.issues.some((i) => i.path[0] === 'phone')).toBe(true)
   })
 
   it('rejects an unknown role and a missing name', () => {

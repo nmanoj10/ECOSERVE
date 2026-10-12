@@ -10,6 +10,7 @@ import { ProtectedRoute } from '@/routes/ProtectedRoute'
 
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
 const RegisterPage = lazy(() => import('@/pages/auth/RegisterPage'))
+const ResetPasswordPage = lazy(() => import('@/pages/auth/ResetPasswordPage'))
 const DonorDashboardPage = lazy(() => import('@/pages/donor/DashboardPage'))
 const DonorProfilePage = lazy(() => import('@/pages/donor/ProfilePage'))
 const NewDonationPage = lazy(() => import('@/pages/donor/NewDonationPage'))
@@ -79,6 +80,7 @@ export default function App() {
           <Route path="/design-system" element={<DesignSystemPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route
           path="/donor"
           element={

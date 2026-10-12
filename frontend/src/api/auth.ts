@@ -5,7 +5,7 @@ import { api } from './client'
 export interface RegisterPayload {
   fullName: string
   role: 'DONOR' | 'NGO' | 'VOLUNTEER'
-  phone?: string
+  phone: string
   donor?: {
     organizationName: string
     organizationType: string

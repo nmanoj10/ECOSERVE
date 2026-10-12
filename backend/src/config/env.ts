@@ -21,6 +21,22 @@ const envSchema = z.object({
   // Token expiry in seconds (default 1 hour if not set)
   JWT_EXPIRES_IN: z.coerce.number().int().positive().default(3600),
 
+  // Firebase / Google sign-in (Google OAuth via Firebase Auth). Optional — when
+  // FIREBASE_PROJECT_ID is unset the /auth/google endpoint reports it as
+  // unavailable (503) and the rest of auth keeps working unchanged. The token
+  // audience check uses the project NUMBER (the `aud` claim), not the ID.
+  FIREBASE_PROJECT_ID: z.string().optional(),
+  FIREBASE_PROJECT_NUMBER: z.string().optional(),
+
+  // Email (password-reset OTP, Phase 41). Optional — the app boots without
+  // them and OTP delivery falls back to the server console (development),
+  // so dev/test never hard-require a mail server. In production set all four.
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  EMAIL_FROM: z.string().default('EcoServe <no-reply@ecoserve.local>'),
+
   // ImageKit (Step 44). Optional — the app boots without them; the upload
   // signing endpoint reports `configured: false` until the private key is set.
   // The public key ships to the browser, so refuse a private key pasted in.
@@ -80,7 +96,7 @@ const envSchema = z.object({
 const parsed = envSchema.safeParse(process.env)
 
 if (!parsed.success) {
-  console.error('❌ Invalid environment variables:', parsed.error.flatten().fieldErrors)
+  console.error(' Invalid environment variables:', parsed.error.flatten().fieldErrors)
   process.exit(1)
 }
 

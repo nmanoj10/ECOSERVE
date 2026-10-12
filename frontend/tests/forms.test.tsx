@@ -12,12 +12,14 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import LoginPage from '@/pages/auth/LoginPage'
 import RegisterPage from '@/pages/auth/RegisterPage'
+import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 import NewDonationPage from '@/pages/donor/NewDonationPage'
 import DonorProfilePage from '@/pages/donor/ProfilePage'
 import { ToastProvider } from '@/components/ui/Toast'
 import { fetchMe, registerUser } from '@/api/auth'
 import { api } from '@/api/client'
-import { signup, login, getCurrentUser, setTokens } from '@/services/local-auth'
+import { signup, login, forgotPassword, resetPassword, googleLogin, getCurrentUser, setTokens } from '@/services/local-auth'
+import { signInWithGoogle } from '@/services/firebase'
 
 // ── Module mocks (Supabase session, API layer, auth hook) ───────────────────
 
@@ -55,10 +57,17 @@ vi.mock('@/api/auth', () => ({
 vi.mock('@/services/local-auth', () => ({
   signup: vi.fn(),
   login: vi.fn(),
+  forgotPassword: vi.fn(),
+  resetPassword: vi.fn(),
+  googleLogin: vi.fn(),
   getCurrentUser: vi.fn(),
   setTokens: vi.fn(),
   logout: vi.fn(),
   getAccessToken: vi.fn(),
+}))
+
+vi.mock('@/services/firebase', () => ({
+  signInWithGoogle: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
@@ -98,6 +107,10 @@ const mockedRegisterUser = vi.mocked(registerUser)
 const mockedApi = vi.mocked(api)
 const mockedSignup = vi.mocked(signup)
 const mockedLogin = vi.mocked(login)
+const mockedForgotPassword = vi.mocked(forgotPassword)
+const mockedResetPassword = vi.mocked(resetPassword)
+const mockedGoogleLogin = vi.mocked(googleLogin)
+const mockedSignInWithGoogle = vi.mocked(signInWithGoogle)
 const mockedGetCurrentUser = vi.mocked(getCurrentUser)
 const mockedSetTokens = vi.mocked(setTokens)
 
@@ -120,6 +133,18 @@ beforeEach(() => {
   } as never)
   mockedGetCurrentUser.mockResolvedValue(null)
   mockedSetTokens.mockImplementation(() => {})
+  mockedForgotPassword.mockResolvedValue()
+  mockedResetPassword.mockResolvedValue()
+  mockedSignInWithGoogle.mockResolvedValue({
+    idToken: 'firebase-id-token',
+    email: 'alice@example.com',
+    name: 'Alice',
+  })
+  mockedGoogleLogin.mockResolvedValue({
+    user: { id: 'u1', email: 'alice@example.com', role: 'DONOR' },
+    tokens: { accessToken: 'google-access', refreshToken: 'google-refresh', expiresIn: 3600 },
+    needsProfile: false,
+  } as never)
 })
 
 // ── Harnesses ────────────────────────────────────────────────────────────────
@@ -158,6 +183,17 @@ function renderNewDonation() {
           <Route path="/donor" element={<div>Donor dashboard probe</div>} />
         </Routes>
       </ToastProvider>
+    </MemoryRouter>,
+  )
+}
+
+function renderResetPassword(initialEntry = '/reset-password') {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <Routes>
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/login" element={<div>Login probe</div>} />
+      </Routes>
     </MemoryRouter>,
   )
 }
@@ -244,7 +280,7 @@ describe('LoginPage', () => {
     expect(password.type).toBe('password')
   })
 
-  it('asks for an email before sending a password reset link', async () => {
+  it('asks for an email before sending a password reset code', async () => {
     const user = userEvent.setup()
     renderLogin()
 
@@ -252,16 +288,78 @@ describe('LoginPage', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Enter your email address first')
     expect(mockedLogin).not.toHaveBeenCalled()
+    expect(mockedForgotPassword).not.toHaveBeenCalled()
   })
 
-  it('confirms a reset link is sent when the email is filled in', async () => {
+  it('requests a 6-digit reset code for the filled-in email', async () => {
     const user = userEvent.setup()
     renderLogin()
 
     await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
     await user.click(screen.getByRole('button', { name: /forgot password/i }))
 
-    expect(await screen.findByRole('status')).toHaveTextContent(/password reset link to alice@example.com/i)
+    expect(await screen.findByRole('status')).toHaveTextContent(/6-digit reset code to alice@example.com/i)
+    expect(mockedForgotPassword).toHaveBeenCalledWith('alice@example.com')
+    // The success notice links to the reset page so the user can enter the code.
+    expect(screen.getByRole('link', { name: /enter the code to reset your password/i })).toHaveAttribute(
+      'href',
+      '/reset-password?email=alice%40example.com',
+    )
+  })
+
+  it('surfaces a failed code request in an alert', async () => {
+    mockedForgotPassword.mockRejectedValue(new Error('Something went wrong'))
+    const user = userEvent.setup()
+    renderLogin()
+
+    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
+    await user.click(screen.getByRole('button', { name: /forgot password/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('logs in with Google and lands on the role dashboard when the profile exists', async () => {
+    const user = userEvent.setup()
+    renderLogin()
+
+    await user.click(screen.getByRole('button', { name: /continue with google/i }))
+
+    expect(await screen.findByText('Donor dashboard probe')).toBeInTheDocument()
+    expect(mockedSignInWithGoogle).toHaveBeenCalledTimes(1)
+    expect(mockedGoogleLogin).toHaveBeenCalledWith('firebase-id-token')
+    expect(mockedSetTokens).toHaveBeenCalledWith({
+      accessToken: 'google-access',
+      refreshToken: 'google-refresh',
+      expiresIn: 3600,
+    })
+  })
+
+  it('sends profile-less Google users to /register to complete their profile', async () => {
+    mockedGoogleLogin.mockResolvedValue({
+      user: { id: 'u1', email: 'alice@example.com', role: 'DONOR' },
+      tokens: { accessToken: 't', refreshToken: 'r', expiresIn: 3600 },
+      needsProfile: true,
+    } as never)
+    const user = userEvent.setup()
+    renderLogin()
+
+    await user.click(screen.getByRole('button', { name: /continue with google/i }))
+
+    expect(await screen.findByText('Register page probe')).toBeInTheDocument()
+  })
+
+  it('surfaces a Google sign-in failure in an alert', async () => {
+    mockedSignInWithGoogle.mockRejectedValue(
+      new Error('Google sign-in is not configured yet (missing VITE_FIREBASE_* env vars).'),
+    )
+    const user = userEvent.setup()
+    renderLogin()
+
+    await user.click(screen.getByRole('button', { name: /continue with google/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Google sign-in is not configured/i)
+    expect(mockedGoogleLogin).not.toHaveBeenCalled()
   })
 })
 
@@ -292,12 +390,48 @@ describe('RegisterPage', () => {
     await user.click(screen.getByText('Volunteer'))
     await user.type(screen.getByLabelText('Full name'), 'Ravi')
     await user.type(screen.getByLabelText('Email'), 'ravi@example.com')
+    await user.type(screen.getByLabelText('Phone'), '9876543210')
     await user.type(screen.getByLabelText('Password'), 'password123')
     await user.type(screen.getByLabelText('Confirm password'), 'password124')
     await user.click(screen.getByRole('button', { name: /create account/i }))
 
     expect(await screen.findByText('Passwords do not match')).toBeInTheDocument()
     expect(mockedSignup).not.toHaveBeenCalled()
+  })
+
+  it('requires a phone number before creating the account', async () => {
+    const user = userEvent.setup()
+    renderRegister()
+
+    await user.click(screen.getByText('Volunteer'))
+    await user.type(screen.getByLabelText('Full name'), 'Ravi')
+    await user.type(screen.getByLabelText('Email'), 'ravi@example.com')
+    // Phone deliberately left empty.
+    await user.type(screen.getByLabelText('Password'), 'password123')
+    await user.type(screen.getByLabelText('Confirm password'), 'password123')
+    await user.click(screen.getByRole('button', { name: /create account/i }))
+
+    expect(await screen.findByText('Phone number is required')).toBeInTheDocument()
+    expect(mockedSignup).not.toHaveBeenCalled()
+  })
+
+  it('prefills email and full name from a Google profile in navigation state', () => {
+    render(
+      <MemoryRouter
+        initialEntries={[
+          { pathname: '/register', state: { googleProfile: { email: 'g.ramsay@gmail.com', fullName: 'Gordon Ramsay' } } },
+        ]}
+      >
+        <Routes>
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/donor" element={<div>Donor dashboard probe</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByLabelText('Full name')).toHaveValue('Gordon Ramsay')
+    expect(screen.getByLabelText('Email')).toHaveValue('g.ramsay@gmail.com')
+    expect(screen.getByLabelText('Phone')).toHaveValue('')
   })
 
   it('signs up via the backend, stores the returned tokens, and lands on the role dashboard', async () => {
@@ -311,6 +445,7 @@ describe('RegisterPage', () => {
     await user.click(screen.getByText('Volunteer'))
     await user.type(screen.getByLabelText('Full name'), 'Ravi Kumar')
     await user.type(screen.getByLabelText('Email'), 'ravi@example.com')
+    await user.type(screen.getByLabelText('Phone'), '9876543210')
     await user.type(screen.getByLabelText('Password'), 'password123')
     await user.type(screen.getByLabelText('Confirm password'), 'password123')
     await user.click(screen.getByRole('button', { name: /create account/i }))
@@ -341,6 +476,7 @@ describe('RegisterPage', () => {
     await user.click(screen.getByText('Volunteer'))
     await user.type(screen.getByLabelText('Full name'), 'Ravi')
     await user.type(screen.getByLabelText('Email'), 'ravi@example.com')
+    await user.type(screen.getByLabelText('Phone'), '9876543210')
     await user.type(screen.getByLabelText('Password'), 'password123')
     await user.type(screen.getByLabelText('Confirm password'), 'password123')
     await user.click(screen.getByRole('button', { name: /create account/i }))
@@ -357,6 +493,7 @@ describe('RegisterPage', () => {
     await user.click(screen.getByText('Volunteer'))
     await user.type(screen.getByLabelText('Full name'), 'Ravi Kumar')
     await user.type(screen.getByLabelText('Email'), 'ravi@example.com')
+    await user.type(screen.getByLabelText('Phone'), '9876543210')
     await user.type(screen.getByLabelText('Password'), 'password123')
     await user.type(screen.getByLabelText('Confirm password'), 'password123')
     await user.click(screen.getByRole('button', { name: /create account/i }))
@@ -379,11 +516,68 @@ describe('RegisterPage', () => {
     await user.click(screen.getByText('Volunteer'))
     await user.type(screen.getByLabelText('Full name'), 'Ravi')
     await user.type(screen.getByLabelText('Email'), 'ravi@example.com')
+    await user.type(screen.getByLabelText('Phone'), '9876543210')
     await user.type(screen.getByLabelText('Password'), 'password123')
     await user.type(screen.getByLabelText('Confirm password'), 'password123')
     await user.click(screen.getByRole('button', { name: /create account/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Email already registered')
+  })
+})
+
+// ── Reset password ───────────────────────────────────────────────────────────
+
+describe('ResetPasswordPage', () => {
+  it('prefills the email from the query string', () => {
+    renderResetPassword('/reset-password?email=alice%40example.com')
+
+    expect(screen.getByLabelText('Email Address')).toHaveValue('alice@example.com')
+  })
+
+  it('rejects a non-6-digit code and mismatched passwords without calling the API', async () => {
+    const user = userEvent.setup()
+    renderResetPassword()
+
+    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
+    await user.type(screen.getByLabelText('Reset code'), '123')
+    await user.type(screen.getByLabelText('New password'), 'password123')
+    await user.type(screen.getByLabelText('Confirm new password'), 'password124')
+    await user.click(screen.getByRole('button', { name: /reset password/i }))
+
+    expect(await screen.findByText('Enter the 6-digit code')).toBeInTheDocument()
+    expect(screen.getByText('Passwords do not match')).toBeInTheDocument()
+    expect(mockedResetPassword).not.toHaveBeenCalled()
+  })
+
+  it('verifies the code and new password via the backend, then shows the success panel', async () => {
+    const user = userEvent.setup()
+    renderResetPassword()
+
+    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
+    await user.type(screen.getByLabelText('Reset code'), '123456')
+    await user.type(screen.getByLabelText('New password'), 'password123')
+    await user.type(screen.getByLabelText('Confirm new password'), 'password123')
+    await user.click(screen.getByRole('button', { name: /reset password/i }))
+
+    expect(await screen.findByText('Password updated')).toBeInTheDocument()
+    expect(mockedResetPassword).toHaveBeenCalledWith('alice@example.com', '123456', 'password123')
+    // Success button + the always-present footer link both lead to /login.
+    expect(screen.getAllByRole('link', { name: /back to login/i })).toHaveLength(2)
+  })
+
+  it('surfaces a failed reset in an alert and stays on the form', async () => {
+    mockedResetPassword.mockRejectedValue(Object.assign(new Error('Invalid or expired reset code'), {}))
+    const user = userEvent.setup()
+    renderResetPassword()
+
+    await user.type(screen.getByLabelText('Email Address'), 'alice@example.com')
+    await user.type(screen.getByLabelText('Reset code'), '000000')
+    await user.type(screen.getByLabelText('New password'), 'password123')
+    await user.type(screen.getByLabelText('Confirm new password'), 'password123')
+    await user.click(screen.getByRole('button', { name: /reset password/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid or expired reset code')
+    expect(screen.getByRole('button', { name: /reset password/i })).toBeInTheDocument()
   })
 })
 

@@ -34,7 +34,7 @@ const volunteerProfileSchema = z.object({
 export const registerSchema = z.object({
   fullName: z.string().trim().min(1).max(100),
   role: z.enum(['DONOR', 'NGO', 'VOLUNTEER']),
-  phone: z.string().trim().max(20).optional(),
+  phone: z.string().trim().min(1, 'Phone number is required').max(20),
   donor: donorProfileSchema.optional(),
   ngo: ngoProfileSchema.optional(),
   volunteer: volunteerProfileSchema.optional(),

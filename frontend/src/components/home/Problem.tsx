@@ -31,7 +31,7 @@ export default function Problem() {
         <Reveal className="max-w-2xl">
           <Eyebrow>The problem</Eyebrow>
           <h2 className="mt-5 text-3xl font-semibold tracking-tight text-neutral-900 sm:text-4xl">
-            A third of the world&apos;s food is wasted. Most of it never reaches a plate.
+            One third of the world&apos;s food is wasted. Most of it never reaches a plate.
           </h2>
           <p className="mt-5 text-lg leading-relaxed text-neutral-600">
             The food exists. The people who need it exist. What&apos;s missing is the connective tissue between them.

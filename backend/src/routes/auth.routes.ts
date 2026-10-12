@@ -2,7 +2,9 @@ import { Router } from 'express'
 
 import {
   createInstantSignup,
+  forgotPassword,
   getPendingRegistration,
+  googleLogin,
   listSessions,
   login,
   logout,
@@ -10,13 +12,21 @@ import {
   refresh,
   register,
   registerSession,
+  resetPassword,
   revokeSession,
   savePendingRegistration,
 } from '../controllers/authController.js'
 import { authRequired, localVerifyToken } from '../middleware/auth.js'
 import { authLimiter } from '../middleware/rateLimiter.js'
 import { validate } from '../middleware/validate.js'
-import { logoutSchema, refreshSchema, sessionSchema } from '../validators/auth.js'
+import {
+  forgotPasswordSchema,
+  googleAuthSchema,
+  logoutSchema,
+  refreshSchema,
+  resetPasswordSchema,
+  sessionSchema,
+} from '../validators/auth.js'
 import { loginSchema, pendingRegistrationSchema, registerSchema, signupSchema } from '../validators/register.js'
 
 export const authRoutes = Router()
@@ -34,6 +44,14 @@ authRoutes.post('/signup', validate(signupSchema), createInstantSignup)
 
 // Login — authenticates email/password and returns JWT tokens
 authRoutes.post('/login', validate(loginSchema), login)
+
+// Google sign-in — exchanges a verified Firebase ID token for local JWT tokens.
+authRoutes.post('/google', validate(googleAuthSchema), googleLogin)
+
+// Forgot-password — issues and emails a 6-digit OTP (always 200, anti-enumeration).
+authRoutes.post('/forgot-password', validate(forgotPasswordSchema), forgotPassword)
+// Reset-password — verifies the OTP, sets the new password, revokes sessions.
+authRoutes.post('/reset-password', validate(resetPasswordSchema), resetPassword)
 
 // Protected by a valid local JWT token (signed with JWT_SECRET).
 authRoutes.post('/register', localVerifyToken, validate(registerSchema), register)
