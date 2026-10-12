@@ -28,6 +28,10 @@ export interface NearbyDonation {
 
 export interface NgoRequestItem {
   id: string
+  /** Requested quantity (null = full claim) */
+  quantity: number | null
+  /** Unit for requested quantity */
+  unit: string | null
   status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED'
   requestedAt: string
   acceptedAt: string | null
@@ -90,9 +94,14 @@ export async function fetchNearbyDonations(params: {
   return data
 }
 
-/** Step 55 — one-step claim: creates the request and reserves the donation. */
-export async function createNgoRequest(donationId: string): Promise<{ request: NgoRequestItem }> {
-  const { data } = await api.post<{ request: NgoRequestItem }>('/v1/ngo/requests', { donationId })
+/** Step 55 — one-step claim: creates the request and reserves the donation.
+ *  Supports partial quantity claims — donation stays AVAILABLE until fully claimed. */
+export async function createNgoRequest(
+  donationId: string,
+  quantity?: number,
+  unit?: string
+): Promise<{ request: NgoRequestItem }> {
+  const { data } = await api.post<{ request: NgoRequestItem }>('/v1/ngo/requests', { donationId, quantity, unit })
   return data
 }
 

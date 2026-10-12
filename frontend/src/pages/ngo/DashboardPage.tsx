@@ -26,6 +26,8 @@ import { Button } from '@/components/ui/Button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ErrorState } from '@/components/ui/ErrorState'
+import { Input } from '@/components/ui/Input'
+import { Modal } from '@/components/ui/Modal'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import { useToast } from '@/components/ui/Toast'
@@ -142,6 +144,15 @@ export default function NgoDashboardPage() {
   const [activeDeliveries, setActiveDeliveries] = useState<ActiveDelivery[]>([])
   const [analytics, setAnalytics] = useState<NgoAnalytics | null>(null)
 
+  // Partial claim modal state
+  const [claimModal, setClaimModal] = useState<{
+    open: boolean
+    donation: NearbyDonation | null
+    quantity: string
+    unit: string
+    error: string | null
+  }>({ open: false, donation: null, quantity: '', unit: '', error: null })
+
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     // Silent refreshes (after an accept or the periodic sweep) skip the
     // skeleton flash and never blank out a real error state.
@@ -200,29 +211,103 @@ export default function NgoDashboardPage() {
     return () => clearInterval(id)
   }, [load])
 
-  /** Step 55 — one-step claim from the dashboard. */
-  const handleClaim = async (donation: NearbyDonation) => {
+  /** Step 55 — open partial claim modal. */
+  const handleClaim = (donation: NearbyDonation) => {
+    setClaimModal({
+      open: true,
+      donation,
+      quantity: '',
+      unit: donation.unit,
+      error: null,
+    })
+  }
+
+  /** Handle claim from modal (full or partial). */
+  const handleClaimConfirm = async () => {
+    const { donation, quantity, unit } = claimModal
+    if (!donation) return
+
+    const qty = quantity ? Number(quantity) : null
+    // Validate
+    if (qty != null) {
+      if (qty <= 0) {
+        setClaimModal((prev) => ({ ...prev, error: 'Quantity must be greater than 0' }))
+        return
+      }
+      if (qty > donation.quantity) {
+        setClaimModal((prev) => ({ ...prev, error: `Cannot exceed available ${donation.quantity} ${donation.unit}` }))
+        return
+      }
+      if (unit !== donation.unit) {
+        setClaimModal((prev) => ({ ...prev, error: `Unit must match donation unit (${donation.unit})` }))
+        return
+      }
+    }
+
     setClaimingId(donation.id)
+    setClaimModal((prev) => ({ ...prev, error: null }))
     try {
-      await createNgoRequest(donation.id)
+      await createNgoRequest(donation.id, qty ?? undefined, qty != null ? unit : undefined)
+      const isPartial = qty != null && qty < donation.quantity
       toast({
         variant: 'success',
-        title: 'Donation accepted',
-        description: `${donation.foodName} is now reserved for your NGO and moved to your inventory.`,
+        title: isPartial ? 'Partial claim accepted' : 'Donation accepted',
+        description: isPartial
+          ? `${qty} ${unit} of ${donation.foodName} claimed. ${donation.quantity - qty} ${donation.unit} remain available.`
+          : `${donation.foodName} is now reserved for your NGO and moved to your inventory.`,
       })
+      setClaimModal((prev) => ({ ...prev, open: false }))
       load({ silent: true })
     } catch (err) {
-      toast({
-        variant: 'error',
-        title: 'Could not accept',
-        description:
-          (err as { response?: { data?: { error?: { message?: string } } } }).response?.data?.error?.message ??
-          'Something went wrong — try again',
-      })
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string; code?: string } } } }).response?.data?.error?.message ??
+        'Something went wrong — try again'
+      setClaimModal((prev) => ({ ...prev, error: msg }))
     } finally {
       setClaimingId(null)
     }
   }
+
+  // Modal footer (extracted to avoid JSX parsing issues)
+  const claimModalFooter = (
+    <div className="w-full flex justify-end gap-2">
+      <Button
+        variant="secondary"
+        onClick={() => setClaimModal((prev) => ({ ...prev, open: false, error: null }))}
+        disabled={claimingId === claimModal.donation?.id}
+      >
+        Cancel
+      </Button>
+      <Button
+        onClick={handleClaimConfirm}
+        disabled={claimingId === claimModal.donation?.id}
+      >
+        {claimingId === claimModal.donation?.id ? (
+          <>
+            <svg className="mr-2 size-3.5 animate-spin" viewBox="0 0 24 24">
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+                fill="none"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+            Claiming...
+          </>
+        ) : (
+          'Confirm claim'
+        )}
+      </Button>
+    </div>
+  )
 
   const firstName = profile?.fullName?.split(' ')[0] ?? user?.fullName?.split(' ')[0] ?? 'there'
   const ngo = profile?.ngo
@@ -731,6 +816,59 @@ export default function NgoDashboardPage() {
               )}
             </CardContent>
           </Card>
+          {/* Partial claim modal */}
+          <Modal
+            open={claimModal.open}
+            onClose={() => setClaimModal((prev) => ({ ...prev, open: false, error: null }))}
+            title="Claim donation"
+            description={claimModal.donation
+              ? `Available: ${claimModal.donation.quantity} ${claimModal.donation.unit} of ${claimModal.donation.foodName}`
+              : ''}
+            size="md"
+            footer={claimModalFooter}
+          >
+            {claimModal.donation && (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm font-medium text-neutral-900">{claimModal.donation.foodName}</p>
+                  <p className="text-xs text-neutral-500">
+                    From {claimModal.donation.donorOrganization} · {claimModal.donation.distanceKm} km away
+                  </p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Input
+                    label="Quantity"
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    max={claimModal.donation.quantity}
+                    value={claimModal.quantity}
+                    onChange={(e) => setClaimModal((prev) => ({ ...prev, quantity: e.target.value, error: null }))}
+                    placeholder={String(claimModal.donation.quantity)}
+                    hint={`Max: ${claimModal.donation.quantity} ${claimModal.donation.unit}`}
+                  />
+                  <Input
+                    label="Unit"
+                    value={claimModal.unit}
+                    onChange={(e) => setClaimModal((prev) => ({ ...prev, unit: e.target.value, error: null }))}
+                    placeholder={claimModal.donation.unit}
+                    hint="Must match donation unit"
+                  />
+                </div>
+
+                {claimModal.error && (
+                  <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">
+                    {claimModal.error}
+                  </div>
+                )}
+
+                <div className="text-xs text-neutral-500">
+                  Leave quantity empty to claim the full donation (marks it reserved).
+                </div>
+              </div>
+            )}
+          </Modal>
         </>
       )}
     </DashboardShell>
