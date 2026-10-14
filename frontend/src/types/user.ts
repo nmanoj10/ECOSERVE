@@ -9,6 +9,7 @@ export interface DonorProfile {
   latitude?: number | null
   longitude?: number | null
   description?: string | null
+  logoUrl?: string | null
 }
 
 export interface NgoProfile {

@@ -12,6 +12,7 @@ import { geoRoutes } from './geo.routes.js'
 import { donorRoutes } from './donor.routes.js'
 import { ngoRoutes } from './ngo.routes.js'
 import { notificationsRoutes } from './notifications.routes.js'
+import { publicRoutes } from './public.routes.js'
 import { uploadRoutes } from './upload.routes.js'
 import { userRoutes } from './user.routes.js'
 import { volunteerRoutes } from './volunteer.routes.js'
@@ -35,6 +36,7 @@ apiRouter.use('/donor', donorRoutes)
 apiRouter.use('/geo', geoRoutes)
 apiRouter.use('/ngo', ngoRoutes)
 apiRouter.use('/notifications', notificationsRoutes)
+apiRouter.use('/public', publicRoutes)
 apiRouter.use('/uploads', uploadRoutes)
 apiRouter.use('/users', userRoutes)
 apiRouter.use('/volunteer', volunteerRoutes)

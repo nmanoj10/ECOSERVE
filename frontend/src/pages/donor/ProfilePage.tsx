@@ -1,8 +1,8 @@
-import { zodResolver } from '@hookform/resolvers/zod'
-import { Building2, Loader2, LocateFixed, MapPin, Save, Store } from 'lucide-react'
+import { Building2, Image, Loader2, LocateFixed, MapPin, Save, Store, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
+import { zodResolver } from '@hookform/resolvers/zod'
 
 import { fetchMe } from '@/api/auth'
 import { updateDonorProfile } from '@/api/donor'
@@ -19,6 +19,7 @@ import { useGeolocation } from '@/hooks/useGeolocation'
 import { useReverseGeocode } from '@/hooks/useReverseGeocode'
 import { donorNav } from '@/pages/donor/nav'
 import type { DonorProfile } from '@/types/user'
+import { uploadImage, isImageKitConfigured } from '@/services/imagekit'
 
 const profileSchema = z
   .object({
@@ -34,9 +35,10 @@ const profileSchema = z
       .string()
       .refine((v) => v.trim() === '' || (Number.isFinite(Number(v)) && Number(v) >= -180 && Number(v) <= 180), 'Longitude must be between -180 and 180'),
     description: z.string().trim().max(1000).optional(),
+    logoUrl: z.string().url().max(500).optional().or(z.literal('')),
   })
   .refine((data) => (data.latitude.trim() === '') === (data.longitude.trim() === ''), {
-    message: 'Set both latitude and longitude (or use “Use my location”).',
+    message: 'Set both latitude and longitude (or use "Use my location").',
     path: ['longitude'],
   })
 
@@ -51,6 +53,7 @@ const emptyForm: ProfileFormValues = {
   latitude: '',
   longitude: '',
   description: '',
+  logoUrl: '',
 }
 
 function toFormValues(donor: DonorProfile): ProfileFormValues {
@@ -63,6 +66,7 @@ function toFormValues(donor: DonorProfile): ProfileFormValues {
     latitude: donor.latitude != null ? String(donor.latitude) : '',
     longitude: donor.longitude != null ? String(donor.longitude) : '',
     description: donor.description ?? '',
+    logoUrl: donor.logoUrl ?? '',
   }
 }
 
@@ -73,6 +77,7 @@ export default function DonorProfilePage() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [alertsEnabled, setAlertsEnabled] = useState(true)
+  const [logoUploading, setLogoUploading] = useState(false)
   const geo = useGeolocation()
 
   const {
@@ -168,6 +173,7 @@ export default function DonorProfilePage() {
         latitude: hasPin ? Number(values.latitude) : null,
         longitude: hasPin ? Number(values.longitude) : null,
         description: values.description || null,
+        logoUrl: values.logoUrl || null,
       })
       setProfile(donor)
       reset(toFormValues(donor))
@@ -190,6 +196,46 @@ export default function DonorProfilePage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  /** Upload logo to ImageKit and set the logoUrl field. */
+  const handleLogoUpload = async (file: File) => {
+    if (!isImageKitConfigured()) {
+      toast({ variant: 'error', title: 'Upload unavailable', description: 'ImageKit is not configured on the client' })
+      return
+    }
+    setLogoUploading(true)
+    try {
+      const result = await uploadImage(file, 'donor-logos')
+      setValue('logoUrl', result.url, { shouldDirty: true })
+      toast({ variant: 'success', title: 'Logo uploaded', description: 'Your logo will appear on the public showcase.' })
+    } catch (err) {
+      toast({ variant: 'error', title: 'Upload failed', description: (err as Error).message })
+    } finally {
+      setLogoUploading(false)
+    }
+  }
+
+  const handleLogoRemove = () => {
+    setValue('logoUrl', '', { shouldDirty: true })
+    toast({ variant: 'success', title: 'Logo removed' })
+  }
+
+  const handleLogoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // Validate image type and size (same as donation images)
+      if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type.toLowerCase())) {
+        toast({ variant: 'error', title: 'Invalid format', description: 'Please upload JPG, PNG or WEBP' })
+        return
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        toast({ variant: 'error', title: 'File too large', description: 'Maximum size is 5 MB' })
+        return
+      }
+      void handleLogoUpload(file)
+    }
+    e.target.value = ''
   }
 
   const watchedLatitude = watch('latitude')
@@ -240,6 +286,66 @@ export default function DonorProfilePage() {
                 {...register('description')}
               />
               {errors.description && <p className="mt-1 text-xs text-red-600">{errors.description.message}</p>}
+            </div>
+
+            {/* Logo upload section */}
+            <div className="sm:col-span-2">
+              <div className="flex items-center gap-2">
+                <Image className="size-4 text-brand-600" />
+                <label className="mb-1.5 block text-sm font-medium text-neutral-700">Organization logo</label>
+              </div>
+              <p className="text-xs text-neutral-500 mb-3">
+                This logo appears on the public donors showcase (homepage marquee). Recommended: square, 200×200 px, PNG with transparency.
+              </p>
+              {profile?.logoUrl ? (
+                <div className="flex items-center gap-4">
+                  <div className="relative size-20 overflow-hidden rounded-lg border border-neutral-200 bg-neutral-100">
+                    <img src={profile.logoUrl} alt={`${profile.organizationName} logo`} className="size-full object-cover" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm text-neutral-700">Current logo</p>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleLogoRemove}
+                      disabled={saving || logoUploading}
+                    >
+                      <Trash2 className="size-3.5" />
+                      Remove logo
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <label
+                    htmlFor="logo-upload"
+                    className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-lg border-2 border-dashed border-neutral-300 text-neutral-400 cursor-pointer transition hover:border-brand-400 hover:text-brand-600"
+                  >
+                    <Image className="size-8" />
+                    <span className="sr-only">Upload logo</span>
+                  </label>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="w-full sm:w-auto"
+                    onClick={() => document.getElementById('logo-upload')?.click()}
+                    disabled={!isImageKitConfigured() || logoUploading}
+                  >
+                    {logoUploading ? <Loader2 className="size-4 animate-spin" /> : <Image className="size-4" />}
+                    {logoUploading ? 'Uploading…' : 'Upload logo'}
+                  </Button>
+                  <input
+                    id="logo-upload"
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/jpg,image/png,image/webp"
+                    className="hidden"
+                    onChange={handleLogoFileSelect}
+                    disabled={logoUploading}
+                  />
+                </div>
+              )}
+              {errors.logoUrl && <p className="mt-1 text-xs text-red-600">{errors.logoUrl.message}</p>}
             </div>
           </div>
 

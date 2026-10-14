@@ -1,5 +1,6 @@
 import AiSection from '@/components/home/AiSection'
 import CtaSection from '@/components/home/CtaSection'
+import DonorShowcase from '@/components/home/DonorShowcase'
 import Features from '@/components/home/Features'
 import Footer from '@/components/home/Footer'
 import Hero from '@/components/home/Hero'
@@ -22,6 +23,7 @@ export default function HomePage() {
         <Features />
         <AiSection />
         <LiveTracking />
+        <DonorShowcase />
         <ImpactStats />
         <CtaSection />
       </main>

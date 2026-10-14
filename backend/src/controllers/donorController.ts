@@ -8,6 +8,7 @@ import type { UpdateDonorProfileBody } from '../validators/donor.js'
  * PATCH /api/v1/donor/profile — updates the donor's own profile. The location
  * fields (address/city/state + lat/lng pin) back the nearby-donations search
  * when a listing has no pin of its own; sending `null` clears the pin.
+ * `logoUrl` stores a public image URL (e.g. from ImageKit) for the donor showcase.
  */
 export async function updateProfile(req: Request, res: Response): Promise<void> {
   const user = req.user!
@@ -29,6 +30,7 @@ export async function updateProfile(req: Request, res: Response): Promise<void> 
       ...(body.latitude !== undefined && { latitude: body.latitude }),
       ...(body.longitude !== undefined && { longitude: body.longitude }),
       ...(body.description !== undefined && { description: body.description }),
+      ...(body.logoUrl !== undefined && { logoUrl: body.logoUrl }),
     },
   })
 
@@ -37,4 +39,29 @@ export async function updateProfile(req: Request, res: Response): Promise<void> 
   })
 
   res.json({ donor: updated })
+}
+
+/**
+ * GET /api/v1/public/donors — returns all verified donors with logos for the public showcase.
+ * Public endpoint (no auth required). Used for the moving marquee on the homepage.
+ */
+export async function listPublicDonors(_req: Request, res: Response): Promise<void> {
+  const donors = await prisma.donor.findMany({
+    where: {
+      logoUrl: { not: null },
+      user: { status: 'ACTIVE' },
+    },
+    select: {
+      id: true,
+      organizationName: true,
+      organizationType: true,
+      city: true,
+      state: true,
+      logoUrl: true,
+      description: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+
+  res.json({ donors })
 }

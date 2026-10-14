@@ -3,7 +3,7 @@ import { z } from 'zod'
 /**
  * PATCH /api/v1/donor/profile — partial update of the donor's own profile.
  * Every field is optional so the client can send just the location pin.
- * `null` clears a field (e.g. removing the coordinates).
+ * `null` clears a field (e.g. removing the coordinates or logo).
  */
 export const updateDonorProfileSchema = z
   .object({
@@ -16,6 +16,8 @@ export const updateDonorProfileSchema = z
     latitude: z.number().min(-90).max(90).nullable().optional(),
     longitude: z.number().min(-180).max(180).nullable().optional(),
     description: z.string().trim().max(1000).nullable().optional(),
+    /** Donor logo URL (ImageKit or any HTTPS URL) */
+    logoUrl: z.string().url().max(500).nullable().optional(),
   })
   .refine((data) => (data.latitude == null) === (data.longitude == null), {
     // A half-set pin would silently blank the nearby-donations search, so the

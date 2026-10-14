@@ -134,6 +134,7 @@ model Donor {
   latitude         Float?
   longitude        Float?
   description      String?
+  logoUrl          String?  // Donor logo for public showcase
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
